@@ -30,6 +30,23 @@ import { levelForXp } from "../progression.js";
 import type { InventoryEntry, SessionState } from "../world/session.js";
 import { DEFAULT_MAX_HP } from "../world/session.js";
 
+/**
+ * The seven core attributes, post-race/class modifier.
+ *
+ * Stored on the player row rather than recomputed from race + class on every
+ * read, because a levelling or equipment effect will eventually change one
+ * without changing either of those.
+ */
+export interface PlayerAttributes {
+  strength: number;
+  intelligence: number;
+  wisdom: number;
+  charisma: number;
+  constitution: number;
+  dexterity: number;
+  luck: number;
+}
+
 export interface PlayerRecord {
   id: string;
   userId: string;
@@ -39,6 +56,79 @@ export interface PlayerRecord {
   maxHp: number;
   experience: number;
   level: number;
+  /** Display name of the chosen race, e.g. "Human". */
+  raceName: string;
+  /** Display name of the chosen class, e.g. "Warrior". */
+  className: string;
+  attributes: PlayerAttributes;
+}
+
+/**
+ * The columns a PlayerRecord needs, shared by `loadPlayer` and `createPlayer`
+ * so the two can never drift into returning different shapes — the reason
+ * `statistics` could show a race on one path and `undefined` on the other.
+ */
+const PLAYER_SELECT = {
+  id: true,
+  userId: true,
+  name: true,
+  roomId: true,
+  currentHp: true,
+  maxHp: true,
+  experience: true,
+  level: true,
+  strength: true,
+  intelligence: true,
+  wisdom: true,
+  charisma: true,
+  constitution: true,
+  dexterity: true,
+  luck: true,
+  race: { select: { name: true } },
+  class: { select: { name: true } },
+} as const;
+
+/** Row → PlayerRecord. The only place the relation shape is unpacked. */
+function toRecord(row: {
+  id: string;
+  userId: string;
+  name: string;
+  roomId: string | null;
+  currentHp: number;
+  maxHp: number;
+  experience: number;
+  level: number;
+  strength: number;
+  intelligence: number;
+  wisdom: number;
+  charisma: number;
+  constitution: number;
+  dexterity: number;
+  luck: number;
+  race: { name: string };
+  class: { name: string };
+}): PlayerRecord {
+  return {
+    id: row.id,
+    userId: row.userId,
+    name: row.name,
+    roomId: row.roomId,
+    currentHp: row.currentHp,
+    maxHp: row.maxHp,
+    experience: row.experience,
+    level: row.level,
+    raceName: row.race.name,
+    className: row.class.name,
+    attributes: {
+      strength: row.strength,
+      intelligence: row.intelligence,
+      wisdom: row.wisdom,
+      charisma: row.charisma,
+      constitution: row.constitution,
+      dexterity: row.dexterity,
+      luck: row.luck,
+    },
+  };
 }
 
 /**
@@ -56,19 +146,11 @@ export async function loadPlayer(
   prisma: PrismaClient,
   userId: string,
 ): Promise<PlayerRecord | null> {
-  return prisma.mudPlayer.findFirst({
+  const row = await prisma.mudPlayer.findFirst({
     where: { userId },
-    select: {
-      id: true,
-      userId: true,
-      name: true,
-      roomId: true,
-      currentHp: true,
-      maxHp: true,
-      experience: true,
-      level: true,
-    },
+    select: PLAYER_SELECT,
   });
+  return row ? toRecord(row) : null;
 }
 
 /**
@@ -121,18 +203,9 @@ export async function createPlayer(
       experience: 0,
       lastSeenAt: new Date(),
     },
-    select: {
-      id: true,
-      userId: true,
-      name: true,
-      roomId: true,
-      currentHp: true,
-      maxHp: true,
-      experience: true,
-      level: true,
-    },
+    select: PLAYER_SELECT,
   });
-  return created;
+  return toRecord(created);
 }
 
 /**

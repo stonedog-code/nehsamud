@@ -38,6 +38,9 @@ export const helpHandler: CommandHandler = ({ world }) => {
     "  whisper (tell)      — speak privately to someone here",
     "    <who> <message>",
     "  who                 — list the players online",
+    "  statistics (stats)  — your character sheet",
+    "  experience (exp)    — how far you are from the next level",
+    "  rest                — recover health, if nothing hostile is here",
     "  help (h, ?)         — show this list",
     "  quit (q)            — disconnect",
   );

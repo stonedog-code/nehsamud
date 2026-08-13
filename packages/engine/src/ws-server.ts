@@ -159,6 +159,33 @@ export interface MudWsServerOptions {
 
 const DEFAULT_SPAWN_ROOM_ENUM_KEY = "TOWNSMEE_TOWNSQUARE";
 
+/**
+ * PlayerRecord → the session's character sheet.
+ *
+ * Both login paths — an existing player and a freshly created one — must
+ * produce the same sheet, or `statistics` shows a race on one and nothing on
+ * the other depending on how you got here.
+ */
+function sheetFor(record: {
+  raceName: string;
+  className: string;
+  attributes: {
+    strength: number;
+    intelligence: number;
+    wisdom: number;
+    charisma: number;
+    constitution: number;
+    dexterity: number;
+    luck: number;
+  };
+}): import("./world/session.js").CharacterSheet {
+  return {
+    raceName: record.raceName,
+    className: record.className,
+    ...record.attributes,
+  };
+}
+
 export class MudWsServer {
   private readonly wss: WebSocketServer;
   private readonly connections = new Map<WebSocket, ConnectionState>();
@@ -325,6 +352,7 @@ export class MudWsServer {
           startingMaxHp: existing.maxHp,
           startingXp: existing.experience,
           characterName: existing.name,
+          sheet: sheetFor(existing),
         });
         return;
       }
@@ -355,6 +383,7 @@ export class MudWsServer {
       startingMaxHp?: number;
       startingXp?: number;
       characterName?: string;
+      sheet?: import("./world/session.js").CharacterSheet;
     },
   ): Promise<void> {
     const world = this.world!;
@@ -365,6 +394,7 @@ export class MudWsServer {
     // it; the moment other players read your name, an unset one renders as
     // "Someone" to everyone in the room.
     if (persisted?.characterName) session.characterName = persisted.characterName;
+    if (persisted?.sheet) session.sheet = persisted.sheet;
     if (persisted?.startingHp !== undefined) session.currentHp = persisted.startingHp;
     if (persisted?.startingMaxHp !== undefined) session.maxHp = persisted.startingMaxHp;
     if (persisted?.startingXp !== undefined) session.experience = persisted.startingXp;
@@ -470,6 +500,7 @@ export class MudWsServer {
     });
     await this.startSessionAndAutoLook(socket, userId, spawnRoom.id, {
       characterName: created.name,
+      sheet: sheetFor(created),
     });
   }
 

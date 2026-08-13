@@ -44,5 +44,9 @@ export const moveHandler: CommandHandler = (ctx) => {
     return reply(`You can't go ${direction} from here.`);
   }
   ctx.session.currentRoomId = targetRoomId;
+  // You cannot walk somewhere and still be sitting down. Clearing it here
+  // rather than in `rest` is what keeps the flag honest: every way OUT of
+  // resting has to clear it, and movement is the commonest one.
+  ctx.session.resting = false;
   return lookHandler(ctx);
 };

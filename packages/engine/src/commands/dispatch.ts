@@ -28,6 +28,11 @@ import {
   whoHandler,
   yellHandler,
 } from "./handlers/say.js";
+import {
+  experienceHandler,
+  restHandler,
+  statisticsHandler,
+} from "./handlers/status.js";
 import { talkHandler } from "./handlers/talk.js";
 import type {
   CommandContext,
@@ -48,6 +53,9 @@ const BASE_HANDLERS: Record<string, CommandHandler> = {
   yell: yellHandler,
   whisper: whisperHandler,
   who: whoHandler,
+  statistics: statisticsHandler,
+  experience: experienceHandler,
+  rest: restHandler,
   help: helpHandler,
   quit: quitHandler,
 };

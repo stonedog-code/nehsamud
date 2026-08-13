@@ -79,6 +79,7 @@ function session(roomId = SQUARE.id): SessionState {
     level: 1,
     inventory: [],
     defeated: false,
+    resting: false,
   };
 }
 

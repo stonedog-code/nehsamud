@@ -20,7 +20,33 @@ interface MockPlayer {
   maxHp: number;
   experience: number;
   level: number;
+  /* The seven attribute columns and the two relations `statistics` reads.
+   * A fake missing them does not fail loudly — `loadPlayer` unpacks
+   * `row.race.name` and throws a TypeError from inside persistence, which
+   * surfaces three layers away as a socket that never answers. */
+  strength: number;
+  intelligence: number;
+  wisdom: number;
+  charisma: number;
+  constitution: number;
+  dexterity: number;
+  luck: number;
+  race: { name: string };
+  class: { name: string };
 }
+
+/** The attribute half of a row, at the schema's own defaults. */
+const DEFAULT_ATTRIBUTES = {
+  strength: 10,
+  intelligence: 10,
+  wisdom: 10,
+  charisma: 10,
+  constitution: 10,
+  dexterity: 10,
+  luck: 10,
+  race: { name: "Human" },
+  class: { name: "Warrior" },
+};
 
 function makePrisma(options: {
   existingPlayer?: MockPlayer;
@@ -38,6 +64,7 @@ function makePrisma(options: {
       maxHp: args.data.maxHp as number,
       experience: args.data.experience as number,
       level: 1,
+      ...DEFAULT_ATTRIBUTES,
     };
     return created;
   });
@@ -78,13 +105,38 @@ describe("loadPlayer", () => {
       maxHp: 30,
       experience: 55,
       level: 2,
+      ...DEFAULT_ATTRIBUTES,
     };
     const prisma = makePrisma({ existingPlayer: player });
     const result = await loadPlayer(
       prisma as unknown as Parameters<typeof loadPlayer>[0],
       "u-1",
     );
-    expect(result).toEqual(player);
+    // The row is MAPPED, not returned raw: the two relations collapse to
+    // `raceName`/`className` and the seven attribute columns move under
+    // `attributes`, so a caller cannot reach a stat without going through the
+    // shape both load paths share.
+    expect(result).toEqual({
+      id: player.id,
+      userId: player.userId,
+      name: player.name,
+      roomId: player.roomId,
+      currentHp: player.currentHp,
+      maxHp: player.maxHp,
+      experience: player.experience,
+      level: player.level,
+      raceName: "Human",
+      className: "Warrior",
+      attributes: {
+        strength: 10,
+        intelligence: 10,
+        wisdom: 10,
+        charisma: 10,
+        constitution: 10,
+        dexterity: 10,
+        luck: 10,
+      },
+    });
     expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
   });
 });
@@ -157,6 +209,7 @@ describe("loadOrCreatePlayer", () => {
       maxHp: 30,
       experience: 55,
       level: 2,
+      ...DEFAULT_ATTRIBUTES,
     };
     const prisma = makePrisma({ existingPlayer: player });
     const result = await loadOrCreatePlayer(
@@ -164,7 +217,31 @@ describe("loadOrCreatePlayer", () => {
       "u-1",
       "room-spawn",
     );
-    expect(result).toEqual(player);
+    // The row is MAPPED, not returned raw: the two relations collapse to
+    // `raceName`/`className` and the seven attribute columns move under
+    // `attributes`, so a caller cannot reach a stat without going through the
+    // shape both load paths share.
+    expect(result).toEqual({
+      id: player.id,
+      userId: player.userId,
+      name: player.name,
+      roomId: player.roomId,
+      currentHp: player.currentHp,
+      maxHp: player.maxHp,
+      experience: player.experience,
+      level: player.level,
+      raceName: "Human",
+      className: "Warrior",
+      attributes: {
+        strength: 10,
+        intelligence: 10,
+        wisdom: 10,
+        charisma: 10,
+        constitution: 10,
+        dexterity: 10,
+        luck: 10,
+      },
+    });
     expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
   });
 
