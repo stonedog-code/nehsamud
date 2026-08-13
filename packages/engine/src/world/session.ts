@@ -17,6 +17,23 @@ export interface InventoryEntry {
   itemId: string;
   name: string;
   quantity: number;
+  /**
+   * True when this is the item the player is wearing or wielding for its
+   * type. At most one entry per item type may be equipped; `equip` enforces
+   * that by unequipping the previous holder of the slot.
+   */
+  equipped?: boolean;
+  /**
+   * Item type — 1 weapon, 2 armour, 3 consumable, 4 lightsource, 5 misc.
+   *
+   * Carried on the entry so the equip rules and the combat wiring do not
+   * have to reach into the world catalog for a number they need on every
+   * swing. Optional because entries built before items had types (and the
+   * in-memory test fixtures) simply do not have one.
+   */
+  type?: number;
+  /** Weapon damage or armour protection, straight from the catalog. */
+  baseValue?: number | null;
 }
 
 export interface SessionState {

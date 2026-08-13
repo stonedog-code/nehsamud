@@ -43,6 +43,10 @@ export const helpHandler: CommandHandler = ({ world }) => {
     "  rest                — recover health, if nothing hostile is here",
     "  search (sea)        — look harder; some things are hidden",
     "  hide (stash) <item> — conceal something here, findable only by search",
+    "  equip (eq, wield)   — wield or wear something you're carrying",
+    "    <item>",
+    "  unequip (remove)    — put equipped gear away",
+    "    <item>",
     "  help (h, ?)         — show this list",
     "  quit (q)            — disconnect",
   );

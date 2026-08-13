@@ -278,12 +278,23 @@ export async function loadInventory(
 ): Promise<InventoryEntry[]> {
   const rows = await prisma.mudInventory.findMany({
     where: { playerId },
-    select: { itemId: true, quantity: true, item: { select: { name: true } } },
+    select: {
+      itemId: true,
+      quantity: true,
+      equipped: true,
+      // Type and base value come from the catalog, not the inventory row —
+      // they describe the ITEM, and duplicating them per player is how the
+      // two drift after a balance change.
+      item: { select: { name: true, type: true, baseValue: true } },
+    },
   });
   return rows.map((r) => ({
     itemId: r.itemId,
     name: r.item.name,
     quantity: r.quantity,
+    equipped: r.equipped,
+    type: r.item.type,
+    baseValue: r.item.baseValue,
   }));
 }
 
@@ -309,6 +320,10 @@ export async function saveInventory(
           playerId,
           itemId: entry.itemId,
           quantity: entry.quantity,
+          // Without this, equipping something lasts exactly as long as the
+          // session: the save writes `false` for every row, so the player
+          // logs back in unarmed with no error anywhere to explain it.
+          equipped: entry.equipped ?? false,
         },
       }),
     ),

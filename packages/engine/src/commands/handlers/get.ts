@@ -37,10 +37,15 @@ export const getHandler: CommandHandler = ({ world, session, command }) => {
     return reply(`The ${stack.name} is no longer there.`);
   }
 
+  // Type and base value ride along from the catalog so `equip` and the
+  // combat wiring can read them without a lookup on every swing.
+  const catalog = world.getItem(taken.itemId);
   addToInventory(session.inventory, {
     itemId: taken.itemId,
     name: taken.name,
     quantity: 1,
+    type: catalog?.type,
+    baseValue: catalog?.baseValue,
   });
 
   return reply(`You pick up the ${taken.name}.`);

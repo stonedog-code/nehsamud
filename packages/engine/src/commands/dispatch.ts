@@ -18,6 +18,7 @@ import { attackHandler } from "./handlers/attack.js";
 import { dropHandler } from "./handlers/drop.js";
 import { getHandler } from "./handlers/get.js";
 import { hideHandler, searchHandler } from "./handlers/conceal.js";
+import { equipHandler, unequipHandler } from "./handlers/equip.js";
 import { helpHandler } from "./handlers/help.js";
 import { inventoryHandler } from "./handlers/inventory.js";
 import { lookHandler } from "./handlers/look.js";
@@ -59,6 +60,8 @@ const BASE_HANDLERS: Record<string, CommandHandler> = {
   rest: restHandler,
   search: searchHandler,
   hide: hideHandler,
+  equip: equipHandler,
+  unequip: unequipHandler,
   help: helpHandler,
   quit: quitHandler,
 };

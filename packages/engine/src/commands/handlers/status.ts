@@ -34,6 +34,7 @@ import {
   xpForLevel,
   xpToNextLevel,
 } from "../../progression.js";
+import { equippedArmour, equippedWeapon } from "./equip.js";
 import type { CommandHandler } from "../types.js";
 import { reply } from "../types.js";
 
@@ -84,6 +85,19 @@ export const statisticsHandler: CommandHandler = ({ session }) => {
       `  Luck ${sheet.luck}`,
     );
   }
+
+  // Equipment belongs on the character sheet: `statistics` is where a player
+  // checks what they are before deciding whether to pick a fight.
+  const weapon = equippedWeapon(session.inventory);
+  const armour = equippedArmour(session.inventory);
+  lines.push(
+    weapon
+      ? `Wielding: ${weapon.name} (+${weapon.damage} damage)`
+      : "Wielding: nothing",
+    armour
+      ? `Wearing: ${armour.name} (${armour.protection} protection)`
+      : "Wearing: nothing",
+  );
 
   const conditions: string[] = [];
   if (session.defeated) conditions.push("defeated");

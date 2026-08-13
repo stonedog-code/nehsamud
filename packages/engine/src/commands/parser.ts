@@ -105,6 +105,11 @@ const VERB_ALIASES: Record<string, string> = {
   // (`st`, `s`) are NOT aliased: `s` is south, and a player typing a
   // direction who instead stashes their weapon has been badly served.
   stash: "hide",
+  eq: "equip",
+  wield: "equip",
+  wear: "equip",
+  remove: "unequip",
+  unwield: "unequip",
   q: "quit",
   "?": "help",
   h: "help",

@@ -18,10 +18,14 @@ export const inventoryHandler: CommandHandler = ({ session }) => {
 
   const lines = ["You are carrying:"];
   for (const entry of session.inventory) {
+    // Marking the equipped item here rather than only in `statistics`: this
+    // is the list a player reads before a fight, and equipment that is
+    // invisible from it is equipment nobody trusts is on.
+    const worn = entry.equipped ? " (equipped)" : "";
     lines.push(
       entry.quantity > 1
-        ? `  ${entry.name} (x${entry.quantity})`
-        : `  ${entry.name}`,
+        ? `  ${entry.name} (x${entry.quantity})${worn}`
+        : `  ${entry.name}${worn}`,
     );
   }
   const total = inventoryCount(session.inventory);
