@@ -162,12 +162,16 @@ Consumed by:
 
 ### Persistence
 
-Tables live in the `mud` Postgres schema, owned by the `hopper-mud-db` Prisma
-schema today. `mud.player.user_id` carries a cross-schema FK to `public.user`,
-which is a HopperGuard-specific coupling — **the extraction must break it.**
-The engine should define the repository interfaces it needs and let each host
-supply the implementation, so the standalone app is not obliged to carry
-HopperGuard's user table.
+Tables live in the `mud` Postgres schema, owned by `@nehsamud/engine-db`.
+`mud.player.user_id` carries a cross-schema FK to a host-supplied user table,
+which is a coupling to whichever host created it — **worth breaking.** The
+engine should define the repository interfaces it needs and let each host
+supply the implementation, so a standalone deployment is not obliged to carry
+another product's user table.
+
+The FK is still in place. Removing it means a migration, and these migrations
+are checksum-verified against a live database's `_prisma_migrations` table —
+so it is a deliberate schema change, not a tidy-up. Tracked as **OQ5**.
 
 ### Transport
 
@@ -177,9 +181,10 @@ the socket with 4401. HTTP sidecar exposes `/health`, `/metrics`,
 
 ### Auth
 
-HopperGuard mints an HS256 JWT at `/api/mud/auth-token`, audience-pinned to
-the MUD. The standalone app has no such session and needs its own account
-model — **open question OQ2**.
+The engine verifies an HS256 JWT, audience-pinned to the MUD, and the
+embedding host is responsible for minting it from whatever session it already
+has. The standalone app has no such session and needs its own account model —
+**open question OQ2**.
 
 ## 6. Accessibility & plain language
 
