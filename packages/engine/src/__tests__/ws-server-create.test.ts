@@ -125,8 +125,28 @@ function fakePrisma(
       create,
       update: jest.fn(async () => undefined),
     },
-    mudRace: { findFirst: jest.fn(async () => ({ id: "race-human" })) },
-    mudClass: { findFirst: jest.fn(async () => ({ id: "class-fighter" })) },
+    mudRace: {
+      findMany: jest.fn(async () => [
+        { slug: "dwarf", name: "Dwarf" },
+        { slug: "human", name: "Human" },
+      ]),
+      findUnique: jest.fn(async (args: { where: { slug: string } }) =>
+        ["dwarf", "human"].includes(args.where.slug)
+          ? { id: `race-${args.where.slug}`, playable: true }
+          : null,
+      ),
+    },
+    mudClass: {
+      findMany: jest.fn(async () => [
+        { slug: "mage", name: "Mage" },
+        { slug: "warrior", name: "Warrior" },
+      ]),
+      findUnique: jest.fn(async (args: { where: { slug: string } }) =>
+        ["mage", "warrior"].includes(args.where.slug)
+          ? { id: `class-${args.where.slug}`, playable: true }
+          : null,
+      ),
+    },
     _rows: rows,
   };
 }
@@ -209,6 +229,41 @@ async function authNew(sock: WebSocket, userId: string): Promise<string[]> {
 
 /* ── tests ───────────────────────────────────────────────────────── */
 
+/**
+ * Walk the three-step creation flow and return the frames from the LAST step.
+ *
+ * Creation stopped being one message when race and class stopped being
+ * defaulted. The earlier steps only ask questions, so the interesting frames
+ * — the welcome, or whatever went wrong — all arrive on the third.
+ */
+async function createViaFlow(
+  client: WebSocket,
+  name: string,
+  opts: { bare?: boolean; race?: string; characterClass?: string } = {},
+): Promise<string[]> {
+  client.send(
+    JSON.stringify({
+      type: "CLIENT_MESSAGE",
+      message: opts.bare ? name : `create ${name}`,
+    }),
+  );
+  await drainUntilSilent(client);
+  client.send(
+    JSON.stringify({
+      type: "CLIENT_MESSAGE",
+      message: opts.race ?? "dwarf",
+    }),
+  );
+  await drainUntilSilent(client);
+  client.send(
+    JSON.stringify({
+      type: "CLIENT_MESSAGE",
+      message: opts.characterClass ?? "mage",
+    }),
+  );
+  return drainUntilSilent(client);
+}
+
 describe("MudWsServer — character creation flow", () => {
   let booted: Booted;
 
@@ -231,15 +286,12 @@ describe("MudWsServer — character creation flow", () => {
     client.close();
   });
 
-  it("creates the player at the spawn and auto-looks on `create <name>`", async () => {
+  it("creates the player at the spawn and auto-looks once all three answers are in", async () => {
     booted = await boot(fakePrisma());
     const client = await openClient(booted.url);
     await authNew(client, "u-create");
 
-    client.send(
-      JSON.stringify({ type: "CLIENT_MESSAGE", message: "create Aelric" }),
-    );
-    const lines = messages(await drainUntilSilent(client));
+    const lines = messages(await createViaFlow(client, "Aelric"));
 
     expect(booted.prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
     const data = booted.prisma.mudPlayer.create.mock.calls[0]?.[0]
@@ -256,8 +308,7 @@ describe("MudWsServer — character creation flow", () => {
     const client = await openClient(booted.url);
     await authNew(client, "u-bare");
 
-    client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "Brunhild" }));
-    const lines = messages(await drainUntilSilent(client));
+    const lines = messages(await createViaFlow(client, "Brunhild", { bare: true }));
 
     expect(booted.prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
     const data = booted.prisma.mudPlayer.create.mock.calls[0]?.[0]
@@ -278,10 +329,7 @@ describe("MudWsServer — character creation flow", () => {
     expect(booted.prisma.mudPlayer.create).not.toHaveBeenCalled();
 
     // The socket is still awaiting a name — a valid retry succeeds.
-    client.send(
-      JSON.stringify({ type: "CLIENT_MESSAGE", message: "create Cara" }),
-    );
-    const accepted = messages(await drainUntilSilent(client));
+    const accepted = messages(await createViaFlow(client, "Cara"));
     expect(booted.prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
     expect(accepted.some((l) => l.includes("Welcome, Cara"))).toBe(true);
     client.close();
@@ -298,16 +346,13 @@ describe("MudWsServer — character creation flow", () => {
     const client = await openClient(booted.url);
     await authNew(client, "u-dupe");
 
-    client.send(
-      JSON.stringify({ type: "CLIENT_MESSAGE", message: "create Dahlia" }),
-    );
-    const lines = messages(await drainUntilSilent(client));
+    const lines = messages(await createViaFlow(client, "Dahlia"));
     expect(lines.some((l) => /name is taken/i.test(l))).toBe(true);
-    // No session opened: a retry is still routed through creation.
-    client.send(
-      JSON.stringify({ type: "CLIENT_MESSAGE", message: "create Dahlia" }),
-    );
-    const retry = messages(await drainUntilSilent(client));
+
+    // A name collision rewinds to the NAME step, so the obvious retry —
+    // typing `create <name>` again — is read as a name and not as an answer
+    // to the race question the player never got back to.
+    const retry = messages(await createViaFlow(client, "Dahlia"));
     expect(retry.some((l) => /name is taken/i.test(l))).toBe(true);
     client.close();
   });
@@ -321,10 +366,7 @@ describe("MudWsServer — character creation flow", () => {
     const client = await openClient(booted.url);
     await authNew(client, "u-err");
 
-    client.send(
-      JSON.stringify({ type: "CLIENT_MESSAGE", message: "create Eira" }),
-    );
-    const lines = messages(await drainUntilSilent(client));
+    const lines = messages(await createViaFlow(client, "Eira"));
     expect(lines.some((l) => l.includes("Couldn't create character"))).toBe(
       true,
     );

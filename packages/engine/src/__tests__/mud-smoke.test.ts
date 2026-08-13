@@ -149,8 +149,8 @@ interface FakePrisma {
     create: jest.Mock;
     update: jest.Mock;
   };
-  mudRace: { findFirst: jest.Mock };
-  mudClass: { findFirst: jest.Mock };
+  mudRace: { findMany: jest.Mock; findUnique: jest.Mock };
+  mudClass: { findMany: jest.Mock; findUnique: jest.Mock };
   /** Table of rows for test assertions. */
   _rows: Map<string, FakePlayerRow>;
 }
@@ -212,8 +212,28 @@ function fakePrisma(): FakePrisma {
   );
   return {
     mudPlayer: { findFirst, create, update },
-    mudRace: { findFirst: jest.fn(async () => ({ id: "race-human" })) },
-    mudClass: { findFirst: jest.fn(async () => ({ id: "class-fighter" })) },
+    mudRace: {
+      findMany: jest.fn(async () => [
+        { slug: "dwarf", name: "Dwarf" },
+        { slug: "human", name: "Human" },
+      ]),
+      findUnique: jest.fn(async (args: { where: { slug: string } }) =>
+        ["dwarf", "human"].includes(args.where.slug)
+          ? { id: `race-${args.where.slug}`, playable: true }
+          : null,
+      ),
+    },
+    mudClass: {
+      findMany: jest.fn(async () => [
+        { slug: "mage", name: "Mage" },
+        { slug: "warrior", name: "Warrior" },
+      ]),
+      findUnique: jest.fn(async (args: { where: { slug: string } }) =>
+        ["mage", "warrior"].includes(args.where.slug)
+          ? { id: `class-${args.where.slug}`, playable: true }
+          : null,
+      ),
+    },
     _rows: rows,
   };
 }
@@ -275,15 +295,31 @@ async function openClient(url: string): Promise<WebSocket> {
  * commands. Drains the server frames at each step so the caller
  * starts from a quiet socket.
  */
+/**
+ * Authenticate, then walk the three-step creation flow: name, race, class.
+ *
+ * Creation stopped being a single message when the race and class stopped
+ * being defaulted — the server now asks, because picking the
+ * alphabetically-first playable row for everyone is exactly the bug that
+ * made every character in the database identical.
+ */
 async function authAndCreate(
   sock: WebSocket,
   userId: string,
   name = `Hero-${userId}`,
+  race = "dwarf",
+  characterClass = "mage",
 ): Promise<void> {
   sock.send(JSON.stringify({ type: "AUTH", token: token(userId) }));
   await drainUntilSilent(sock);
   sock.send(
     JSON.stringify({ type: "CLIENT_MESSAGE", message: `create ${name}` }),
+  );
+  await drainUntilSilent(sock);
+  sock.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: race }));
+  await drainUntilSilent(sock);
+  sock.send(
+    JSON.stringify({ type: "CLIENT_MESSAGE", message: characterClass }),
   );
   await drainUntilSilent(sock);
 }
@@ -413,14 +449,27 @@ describe("smoke / 2: user creation on AUTH", () => {
     client.close();
   });
 
-  it("a `create <name>` message creates the MudPlayer row at the spawn and auto-looks", async () => {
+  it("the creation flow asks for a name, a race and a class, then creates the row", async () => {
     const client = await openClient(booted.url);
     client.send(JSON.stringify({ type: "AUTH", token: token("user-alpha2") }));
     await drainUntilSilent(client);
 
+    // Name.
     client.send(
       JSON.stringify({ type: "CLIENT_MESSAGE", message: "create Aelric" }),
     );
+    const afterName = parseMessages(await drainUntilSilent(client));
+    expect(afterName.some((l) => l.includes("Choose a race"))).toBe(true);
+    expect(booted.prisma.mudPlayer.create).not.toHaveBeenCalled();
+
+    // Race.
+    client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "dwarf" }));
+    const afterRace = parseMessages(await drainUntilSilent(client));
+    expect(afterRace.some((l) => l.includes("choose a class"))).toBe(true);
+    expect(booted.prisma.mudPlayer.create).not.toHaveBeenCalled();
+
+    // Class — and only now does the row appear.
+    client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "mage" }));
     const lines = parseMessages(await drainUntilSilent(client));
 
     expect(booted.prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
@@ -430,10 +479,66 @@ describe("smoke / 2: user creation on AUTH", () => {
     expect(createArgs.data.userId).toBe("user-alpha2");
     expect(createArgs.data.name).toBe("Aelric");
     expect(createArgs.data.roomId).toBe(ROOM_SQUARE.id);
+    // The whole point: what the player picked is what gets written. Before
+    // this, both ids were whatever came first alphabetically.
+    expect(createArgs.data.raceId).toBe("race-dwarf");
+    expect(createArgs.data.classId).toBe("class-mage");
 
     // The character lands at the spawn and auto-looks the town square.
     expect(lines.some((l) => l.includes("Aelric"))).toBe(true);
     expect(lines.some((l) => l === ROOM_SQUARE.name)).toBe(true);
+
+    client.close();
+  });
+
+  it("creates from a single CREATE_CHARACTER frame, for a client that already knows", async () => {
+    const client = await openClient(booted.url);
+    client.send(JSON.stringify({ type: "AUTH", token: token("user-frame") }));
+    await drainUntilSilent(client);
+
+    client.send(
+      JSON.stringify({
+        type: "CREATE_CHARACTER",
+        name: "Bryn",
+        race: "human",
+        class: "warrior",
+      }),
+    );
+    const lines = parseMessages(await drainUntilSilent(client));
+
+    expect(booted.prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
+    const createArgs = booted.prisma.mudPlayer.create.mock.calls[0]?.[0] as {
+      data: Record<string, unknown>;
+    };
+    expect(createArgs.data.name).toBe("Bryn");
+    expect(createArgs.data.raceId).toBe("race-human");
+    expect(createArgs.data.classId).toBe("class-warrior");
+    expect(lines.some((l) => l === ROOM_SQUARE.name)).toBe(true);
+
+    client.close();
+  });
+
+  it("refuses a race it does not have, and lets the player try again", async () => {
+    // A silent fallback to some default is exactly the bug being fixed, so
+    // the refusal has to be observable.
+    const client = await openClient(booted.url);
+    client.send(JSON.stringify({ type: "AUTH", token: token("user-badrace") }));
+    await drainUntilSilent(client);
+    client.send(
+      JSON.stringify({ type: "CLIENT_MESSAGE", message: "create Corin" }),
+    );
+    await drainUntilSilent(client);
+
+    client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "wombat" }));
+    const rejected = parseMessages(await drainUntilSilent(client));
+    expect(rejected.some((l) => l.includes("isn't one of the races"))).toBe(true);
+    expect(booted.prisma.mudPlayer.create).not.toHaveBeenCalled();
+
+    client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "dwarf" }));
+    await drainUntilSilent(client);
+    client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "mage" }));
+    await drainUntilSilent(client);
+    expect(booted.prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
 
     client.close();
   });

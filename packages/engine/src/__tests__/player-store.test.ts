@@ -72,13 +72,26 @@ function makePrisma(options: {
   return {
     mudPlayer: { findFirst, create, update },
     mudRace: {
-      findFirst: jest.fn(async () =>
-        options.raceId ? { id: options.raceId } : null,
+      // Keyed by SLUG now, and reporting `playable`, because createPlayer
+      // looks up exactly what the player chose instead of taking whatever
+      // came first alphabetically.
+      findUnique: jest.fn(async (args: { where: { slug: string } }) =>
+        options.raceId && args.where.slug === "dwarf"
+          ? { id: options.raceId, playable: true }
+          : null,
+      ),
+      findMany: jest.fn(async () =>
+        options.raceId ? [{ slug: "dwarf", name: "Dwarf" }] : [],
       ),
     },
     mudClass: {
-      findFirst: jest.fn(async () =>
-        options.classId ? { id: options.classId } : null,
+      findUnique: jest.fn(async (args: { where: { slug: string } }) =>
+        options.classId && args.where.slug === "mage"
+          ? { id: options.classId, playable: true }
+          : null,
+      ),
+      findMany: jest.fn(async () =>
+        options.classId ? [{ slug: "mage", name: "Mage" }] : [],
       ),
     },
   };
@@ -149,6 +162,7 @@ describe("createPlayer", () => {
       "u-1",
       "Aelric",
       "room-spawn",
+      { raceSlug: "dwarf", classSlug: "mage" },
     );
     expect(prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
     expect(result.userId).toBe("u-1");
@@ -164,6 +178,7 @@ describe("createPlayer", () => {
       "u-1",
       "  Aelric  ",
       "room-spawn",
+      { raceSlug: "dwarf", classSlug: "mage" },
     );
     expect(result.name).toBe("Aelric");
     const createArgs = prisma.mudPlayer.create.mock.calls[0]?.[0] as {
@@ -180,21 +195,56 @@ describe("createPlayer", () => {
         "u-1",
         "   ",
         "room-spawn",
+  { raceSlug: "dwarf", classSlug: "mage" },
       ),
     ).rejects.toThrow(/name is required/);
     expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
   });
 
-  it("throws when the seed hasn't run (no playable race or class)", async () => {
-    const prisma = makePrisma({});
+  it("refuses a race that is not playable, rather than substituting one", async () => {
+    // The silent fallback this replaces is what made every character in the
+    // database the same race and class.
+    const prisma = makePrisma({ raceId: "race-1", classId: "class-1" });
     await expect(
       createPlayer(
         prisma as unknown as Parameters<typeof createPlayer>[0],
         "u-1",
         "Aelric",
         "room-spawn",
+        { raceSlug: "wombat", classSlug: "mage" },
       ),
-    ).rejects.toThrow(/no playable race or class/);
+    ).rejects.toThrow(/not a playable race/);
+    expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a class that is not playable", async () => {
+    const prisma = makePrisma({ raceId: "race-1", classId: "class-1" });
+    await expect(
+      createPlayer(
+        prisma as unknown as Parameters<typeof createPlayer>[0],
+        "u-1",
+        "Aelric",
+        "room-spawn",
+        { raceSlug: "dwarf", classSlug: "accountant" },
+      ),
+    ).rejects.toThrow(/not a playable class/);
+    expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
+  });
+
+  it("writes the chosen race and class ids, not a default", async () => {
+    const prisma = makePrisma({ raceId: "race-1", classId: "class-1" });
+    await createPlayer(
+      prisma as unknown as Parameters<typeof createPlayer>[0],
+      "u-1",
+      "Aelric",
+      "room-spawn",
+      { raceSlug: "dwarf", classSlug: "mage" },
+    );
+    const createArgs = prisma.mudPlayer.create.mock.calls[0]?.[0] as {
+      data: Record<string, unknown>;
+    };
+    expect(createArgs.data.raceId).toBe("race-1");
+    expect(createArgs.data.classId).toBe("class-1");
   });
 });
 

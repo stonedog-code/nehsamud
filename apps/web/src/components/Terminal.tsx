@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { applyCommand, initialState } from "@/lib/preview-world";
+import type { PreviewCharacter } from "@/lib/preview-world";
 import type { GameMode } from "@/lib/modes";
 
 /**
@@ -14,12 +15,12 @@ import type { GameMode } from "@/lib/modes";
  */
 export function Terminal({
   mode,
-  characterName,
+  character,
 }: {
   mode: GameMode;
-  characterName: string;
+  character: PreviewCharacter;
 }) {
-  const [state, setState] = useState(() => initialState(characterName));
+  const [state, setState] = useState(() => initialState(character));
   const [input, setInput] = useState("");
   const transcriptRef = useRef<HTMLDivElement>(null);
 

@@ -63,8 +63,50 @@ test("creating a character and entering the world", async ({ page }) => {
   await page.getByRole("button", { name: "Enter the world" }).click();
 
   await expect(page).toHaveURL(/\/play\/pve\?/);
-  await expect(page.getByTestId("transcript")).toContainText("Welcome, Aria.");
+  // The race and class chosen above must survive the trip. They used to be
+  // packed into the query string and then dropped by the play page, so the
+  // greeting named only the character and nothing downstream ever mentioned
+  // the choice again — indistinguishable from it not being recorded.
+  await expect(page.getByTestId("transcript")).toContainText(
+    "Welcome, Aria the Dwarf Warrior.",
+  );
   await expect(page.getByTestId("transcript")).toContainText("Town Square");
+});
+
+test("the chosen race and class reach the character sheet", async ({ page }) => {
+  // The tier that would have caught the original bug: every unit test in the
+  // chain passed while the selection was discarded between two pages.
+  await page.goto("/play/pve/create");
+  await page.getByRole("radio", { name: /Halfling/ }).check();
+  await page.getByRole("radio", { name: /Mage/ }).check();
+  await page.getByLabel("Character name").fill("Bryn");
+  await page.getByRole("button", { name: "Enter the world" }).click();
+
+  const input = page.getByTestId("command-input");
+  await input.fill("stats");
+  await input.press("Enter");
+
+  const transcript = page.getByTestId("transcript");
+  await expect(transcript).toContainText("Bryn — level 1");
+  await expect(transcript).toContainText("Halfling Mage");
+  // Not the alphabetically-first pairing the server used to substitute.
+  await expect(transcript).not.toContainText("Dwarf Warrior");
+});
+
+test("a play URL with no race or class goes back to creation", async ({
+  page,
+}) => {
+  // Substituting a default here is exactly what the bug was: a silent
+  // fallback and a working selection look identical from the outside.
+  await page.goto("/play/pve?name=Aria");
+  await expect(page.getByRole("heading", { name: "No character yet" })).toBeVisible();
+});
+
+test("a play URL naming a race that does not exist goes back to creation", async ({
+  page,
+}) => {
+  await page.goto("/play/pve?name=Aria&race=wombat&class=warrior");
+  await expect(page.getByRole("heading", { name: "No character yet" })).toBeVisible();
 });
 
 test("an invalid name is rejected before entering the world", async ({
