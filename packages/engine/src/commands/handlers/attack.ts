@@ -31,6 +31,7 @@ import {
   xpToNextLevel,
 } from "../../progression.js";
 import type { CommandHandler } from "../types.js";
+import { equippedArmour, equippedWeapon } from "./equip.js";
 import { reply } from "../types.js";
 
 /**
@@ -75,9 +76,12 @@ export const attackHandler: CommandHandler = ({
     name: "you",
     level: session.level,
     baseDamage: PLAYER_BASE_DAMAGE,
-    // Weapon and armour are absent until equipment lands (NEH-625). The
-    // resolver already accepts them, so that is a wiring change rather than
-    // a formula change.
+    // What the player has actually equipped. Until this line existed, `equip`
+    // changed a flag and nothing else — the item system's whole point is that
+    // a better sword hits harder, and a decorative equip is the kind of
+    // feature that looks shipped and does nothing.
+    weapon: equippedWeapon(session.inventory),
+    armour: equippedArmour(session.inventory),
   };
   const foe: Combatant = {
     name: monster.name,
