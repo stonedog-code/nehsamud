@@ -33,6 +33,11 @@ export const helpHandler: CommandHandler = ({ world }) => {
     "  get <item>          — pick something up off the floor",
     "  drop <item>         — put something down here",
     "  inventory (i)       — list what you're carrying",
+    "  say (') <message>   — speak to everyone in this room",
+    "  yell <message>      — speak loud enough for nearby rooms to hear",
+    "  whisper (tell)      — speak privately to someone here",
+    "    <who> <message>",
+    "  who                 — list the players online",
     "  help (h, ?)         — show this list",
     "  quit (q)            — disconnect",
   );

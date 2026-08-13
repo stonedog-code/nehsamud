@@ -6,7 +6,7 @@ import type { Tracer } from "@opentelemetry/api";
 
 import type { AiServices } from "../ai/factory.js";
 import type { Rng } from "../combat.js";
-import type { SessionState } from "../world/session.js";
+import type { SessionRegistry, SessionState } from "../world/session.js";
 import type { WorldState } from "../world/world-state.js";
 import type { ParsedCommand } from "./parser.js";
 
@@ -22,6 +22,15 @@ import type { ParsedCommand } from "./parser.js";
 export interface CommandContext {
   world: WorldState;
   session: SessionState;
+  /**
+   * Every live session, for verbs that address other players.
+   *
+   * Optional so the great majority of handlers, and their tests, never think
+   * about it. A communication verb without it degrades to "nobody else is
+   * here" rather than throwing — the right failure for a transport-only test
+   * harness.
+   */
+  sessions?: SessionRegistry;
   command: ParsedCommand;
   ai?: AiServices;
   /** Optional tracer. When unset, handlers skip span creation;
@@ -44,8 +53,35 @@ export interface CommandContext {
  * lines so handlers can compose room render + status updates
  * without baking in the server frame format.
  */
+/**
+ * A message for players OTHER than the one who typed the command.
+ *
+ * Handlers stay pure: they describe who should hear what, and the ws layer
+ * does the delivering. A handler holding sockets would make every
+ * communication verb untestable without standing up a server, and would put
+ * transport concerns in the one place that should only know about the game.
+ */
+export interface Broadcast {
+  /**
+   * `room`     — everyone in `roomId`, minus the speaker.
+   * `adjacent` — everyone in a room directly connected to `roomId`.
+   * `user`     — one player, by userId.
+   */
+  scope: "room" | "adjacent" | "user";
+  message: string;
+  /** Required for `room` and `adjacent`. */
+  roomId?: string;
+  /** Required for `user`. */
+  userId?: string;
+}
+
 export interface CommandResponse {
   lines: string[];
+  /**
+   * What other players hear. Absent for the overwhelming majority of
+   * commands, which only answer the person who typed them.
+   */
+  broadcasts?: Broadcast[];
 }
 
 /**
@@ -59,4 +95,12 @@ export type CommandHandler = (
 
 export function reply(...lines: string[]): CommandResponse {
   return { lines };
+}
+
+/** A response that also reaches other players. */
+export function replyWith(
+  broadcasts: Broadcast[],
+  ...lines: string[]
+): CommandResponse {
+  return { lines, broadcasts };
 }

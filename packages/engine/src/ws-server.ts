@@ -43,6 +43,7 @@ import {
   type ModeCapabilities,
 } from "./game-mode.js";
 import { dispatch } from "./commands/dispatch.js";
+import type { Broadcast } from "./commands/types.js";
 import { parseCommand } from "./commands/parser.js";
 import {
   createPlayer,
@@ -172,6 +173,15 @@ export class MudWsServer {
   /** Map of socket → MudPlayer.id so we know which row to update
    * after each dispatch. */
   private readonly playerIdBySocket = new WeakMap<WebSocket, string>();
+  /**
+   * userId -> socket, for delivering messages to players OTHER than the one
+   * who typed the command.
+   *
+   * A real Map rather than a WeakMap, because it has to be enumerable and
+   * looked up by id — and therefore has to be cleaned up on close, which the
+   * WeakMaps above get for free. `close` does that.
+   */
+  private readonly socketByUserId = new Map<string, WebSocket>();
   /** Connections that have authenticated but don't have a MudPlayer
    * row yet. The next CLIENT_MESSAGE is parsed as
    *   `create <name>`  (or just `<name>`)
@@ -224,6 +234,12 @@ export class MudWsServer {
     socket.on("message", (raw) => this.onMessage(socket, state, raw.toString()));
     socket.on("close", () => {
       this.connections.delete(socket);
+      // Drop the userId->socket entry BEFORE closing the session, while the
+      // session still knows which user this was. A real Map does not clean
+      // itself up the way the WeakMaps beside it do, and a stale entry means
+      // broadcasts delivered into a dead socket forever.
+      const closing = this.sessions.get(socket);
+      if (closing) this.socketByUserId.delete(closing.userId);
       this.sessions.close(socket);
     });
   }
@@ -308,6 +324,7 @@ export class MudWsServer {
           startingHp: existing.currentHp,
           startingMaxHp: existing.maxHp,
           startingXp: existing.experience,
+          characterName: existing.name,
         });
         return;
       }
@@ -337,10 +354,17 @@ export class MudWsServer {
       startingHp?: number;
       startingMaxHp?: number;
       startingXp?: number;
+      characterName?: string;
     },
   ): Promise<void> {
     const world = this.world!;
     const session = this.sessions.open(socket, userId, startingRoomId);
+    this.socketByUserId.set(userId, socket);
+    // The session has always had this field and nothing ever filled it. It
+    // did not matter while every command answered only the player who typed
+    // it; the moment other players read your name, an unset one renders as
+    // "Someone" to everyone in the room.
+    if (persisted?.characterName) session.characterName = persisted.characterName;
     if (persisted?.startingHp !== undefined) session.currentHp = persisted.startingHp;
     if (persisted?.startingMaxHp !== undefined) session.maxHp = persisted.startingMaxHp;
     if (persisted?.startingXp !== undefined) session.experience = persisted.startingXp;
@@ -379,6 +403,7 @@ export class MudWsServer {
       ai: this.ai,
       tracer: this.tracer,
       rng: this.rng,
+      sessions: this.sessions,
     });
     for (const line of look.response.lines) {
       send(socket, { type: "SERVER_MESSAGE", message: line });
@@ -443,7 +468,9 @@ export class MudWsServer {
       type: "SERVER_MESSAGE",
       message: `Welcome, ${created.name}! Your adventure begins…`,
     });
-    await this.startSessionAndAutoLook(socket, userId, spawnRoom.id);
+    await this.startSessionAndAutoLook(socket, userId, spawnRoom.id, {
+      characterName: created.name,
+    });
   }
 
   private handleClientMessage(socket: WebSocket, raw: string): void {
@@ -487,10 +514,12 @@ export class MudWsServer {
         ai: this.ai,
         tracer: this.tracer,
         rng: this.rng,
+        sessions: this.sessions,
       });
       for (const line of result.response.lines) {
         send(socket, { type: "SERVER_MESSAGE", message: line });
       }
+      this.deliverBroadcasts(session, result.response.broadcasts);
       // Trigger room-art generation if the player walked into a
       // new room.
       if (this.prisma && session.currentRoomId !== roomBefore) {
@@ -506,6 +535,56 @@ export class MudWsServer {
         socket.close(1000, "client-quit");
       }
     })();
+  }
+
+  /**
+   * Deliver a command's messages to players other than the one who typed it.
+   *
+   * Lives here rather than in the handlers so they stay pure: a handler
+   * describes WHO should hear WHAT, and this is the only place that knows
+   * about sockets. That is what makes every communication verb testable
+   * without standing up a server.
+   *
+   * Delivery is best-effort per recipient. One player's dead socket must not
+   * stop the rest of the room hearing what was said, and must not fail the
+   * speaker's own command.
+   */
+  private deliverBroadcasts(
+    speaker: import("./world/session.js").SessionState,
+    broadcasts: Broadcast[] | undefined,
+  ): void {
+    if (!broadcasts?.length) return;
+
+    for (const broadcast of broadcasts) {
+      const targets: string[] = [];
+
+      if (broadcast.scope === "user" && broadcast.userId) {
+        targets.push(broadcast.userId);
+      } else if (broadcast.scope === "room" && broadcast.roomId) {
+        for (const s of this.sessions.inRoom(broadcast.roomId, speaker.userId)) {
+          targets.push(s.userId);
+        }
+      } else if (broadcast.scope === "adjacent" && broadcast.roomId) {
+        // Every room this one connects to. Exits are one-directional in the
+        // data even though the fixtures keep them paired, so this reaches
+        // where you could WALK from here, which is what "adjacent" means to a
+        // player.
+        const room = this.world?.getRoom(broadcast.roomId);
+        for (const targetRoomId of Object.values(room?.exits ?? {})) {
+          for (const s of this.sessions.inRoom(targetRoomId, speaker.userId)) {
+            targets.push(s.userId);
+          }
+        }
+      }
+
+      // A player standing in two target sets — adjacent rooms that both lead
+      // back here — should hear it once.
+      for (const userId of new Set(targets)) {
+        if (userId === speaker.userId) continue;
+        const target = this.socketByUserId.get(userId);
+        if (target) send(target, { type: "SERVER_MESSAGE", message: broadcast.message });
+      }
+    }
   }
 
   private async persistAfterDispatch(

@@ -293,6 +293,31 @@ function drainUntilSilent(sock: WebSocket, idleMs = 50): Promise<string[]> {
   });
 }
 
+/**
+ * Start recording frames NOW, and return a stop-and-read function.
+ *
+ * `drainUntilSilent` cannot observe a broadcast caused by SOMEONE ELSE's
+ * command: by the time the speaker's own drain has gone idle and we attach a
+ * listener to the listener's socket, their frame has already arrived and been
+ * dropped — `ws` does not buffer for a listener attached later. Every
+ * "B heard it" assertion silently read an empty array, and every "B did NOT
+ * hear it" assertion passed vacuously, which is the worse half: those tests
+ * would still be green with the broadcast wired to the wrong room.
+ *
+ * So a recipient's collector must be attached BEFORE the speaker sends.
+ */
+function collectFrom(sock: WebSocket): () => string[] {
+  const frames: string[] = [];
+  const onMsg = (raw: WebSocket.RawData): void => {
+    frames.push(raw.toString());
+  };
+  sock.on("message", onMsg);
+  return () => {
+    sock.off("message", onMsg);
+    return frames;
+  };
+}
+
 function parseMessages(frames: string[]): string[] {
   return frames
     .map((f) => JSON.parse(f) as { type: string; message?: string })
@@ -598,5 +623,80 @@ describe("smoke / 5: multiple users share world state", () => {
 
     userA.close();
     userB.close();
+  });
+});
+
+/* ── 6. Players can talk to each other ───────────────────────────── */
+
+describe("smoke / 6: communication reaches other sockets", () => {
+  it("say is heard by the room and not by the speaker twice", async () => {
+    // The delivery half of `say`. A unit test can assert that a handler
+    // RETURNS a broadcast; only this can show it arriving on someone else's
+    // socket, which is the part that makes "multi-user" true.
+    const userA = await openClient(booted.url);
+    const userB = await openClient(booted.url);
+    await authAndCreate(userA, "user-say-a", "Aria");
+    await authAndCreate(userB, "user-say-b", "Bran");
+
+    const stopB = collectFrom(userB);
+    userA.send(
+      JSON.stringify({ type: "CLIENT_MESSAGE", message: "say hello there" }),
+    );
+    const heardByA = parseMessages(await drainUntilSilent(userA));
+    const heardByB = parseMessages(stopB());
+
+    expect(heardByA.some((l) => l === 'You say "hello there"')).toBe(true);
+    // The speaker must not also receive the third-person form.
+    expect(heardByA.some((l) => l.includes("Aria says"))).toBe(false);
+    expect(heardByB.some((l) => l === 'Aria says "hello there"')).toBe(true);
+
+    userA.close();
+    userB.close();
+  });
+
+  it("a player in another room does not hear a say", async () => {
+    const userA = await openClient(booted.url);
+    const userB = await openClient(booted.url);
+    await authAndCreate(userA, "user-say-c", "Cass");
+    await authAndCreate(userB, "user-say-d", "Dell");
+
+    // Move B out of the square before A speaks.
+    userB.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "north" }));
+    await drainUntilSilent(userB);
+
+    const stopB = collectFrom(userB);
+    userA.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "say private" }));
+    await drainUntilSilent(userA);
+    const heardByB = parseMessages(stopB());
+
+    expect(heardByB.some((l) => l.includes("private"))).toBe(false);
+
+    userA.close();
+    userB.close();
+  });
+
+  it("whisper reaches only its target", async () => {
+    const userA = await openClient(booted.url);
+    const userB = await openClient(booted.url);
+    const userC = await openClient(booted.url);
+    await authAndCreate(userA, "user-w-a", "Eve");
+    await authAndCreate(userB, "user-w-b", "Finn");
+    await authAndCreate(userC, "user-w-c", "Gwen");
+
+    const stopB = collectFrom(userB);
+    const stopC = collectFrom(userC);
+    userA.send(
+      JSON.stringify({ type: "CLIENT_MESSAGE", message: "whisper Finn psst" }),
+    );
+    await drainUntilSilent(userA);
+    const heardByB = parseMessages(stopB());
+    const heardByC = parseMessages(stopC());
+
+    expect(heardByB.some((l) => l.includes('whispers "psst" to you'))).toBe(true);
+    expect(heardByC.some((l) => l.includes("psst"))).toBe(false);
+
+    userA.close();
+    userB.close();
+    userC.close();
   });
 });
