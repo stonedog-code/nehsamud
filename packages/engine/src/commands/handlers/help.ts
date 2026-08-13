@@ -41,6 +41,8 @@ export const helpHandler: CommandHandler = ({ world }) => {
     "  statistics (stats)  — your character sheet",
     "  experience (exp)    — how far you are from the next level",
     "  rest                — recover health, if nothing hostile is here",
+    "  search (sea)        — look harder; some things are hidden",
+    "  hide (stash) <item> — conceal something here, findable only by search",
     "  help (h, ?)         — show this list",
     "  quit (q)            — disconnect",
   );

@@ -249,6 +249,12 @@ model MudRoomItem {
   roomId    String   @map("room_id") @db.Uuid
   itemId    String   @map("item_id") @db.Uuid
   quantity  Int      @default(1)
+  /// Concealed from `look`, findable only by `search`.
+  ///
+  /// A flag on the placement rather than on the item, because the same item
+  /// can lie in plain sight in one room and be stashed in another — hidden
+  /// is a fact about where a thing is, not about what it is.
+  hidden    Boolean  @default(false)
   createdAt DateTime @default(now()) @map("created_at")
 
   room MudRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)

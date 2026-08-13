@@ -100,6 +100,11 @@ const VERB_ALIASES: Record<string, string> = {
   stats: "statistics",
   exp: "experience",
   xp: "experience",
+  sea: "search",
+  // `stash` is the original's synonym for hiding an item. Its short forms
+  // (`st`, `s`) are NOT aliased: `s` is south, and a player typing a
+  // direction who instead stashes their weapon has been badly served.
+  stash: "hide",
   q: "quit",
   "?": "help",
   h: "help",

@@ -106,6 +106,15 @@ export interface RoomItemStack {
   itemId: string;
   name: string;
   quantity: number;
+  /**
+   * Concealed from `look`; only `search` reveals it.
+   *
+   * Part of the stack IDENTITY, not a property of it: a hidden stack and a
+   * visible stack of the same item in the same room are two stacks. Merging
+   * them would mean stashing one coin conceals the whole pile, and revealing
+   * one would produce coins nobody hid.
+   */
+  hidden: boolean;
 }
 
 export class WorldState {
@@ -274,7 +283,7 @@ export class WorldState {
     // dropped last week is still on that floor. So they are loaded rather
     // than regenerated, and written back when they move.
     const roomItemRows = await prisma.mudRoomItem.findMany({
-      select: { roomId: true, itemId: true, quantity: true },
+      select: { roomId: true, itemId: true, quantity: true, hidden: true },
     });
     this.roomItems.clear();
     for (const ri of roomItemRows) {
@@ -282,7 +291,7 @@ export class WorldState {
       // a half-loaded world is worse than a world missing one object, and the
       // boot should not die on stale data it can simply ignore.
       if (this.items.has(ri.itemId)) {
-        this.addItemToRoom(ri.roomId, ri.itemId, ri.quantity);
+        this.addItemToRoom(ri.roomId, ri.itemId, ri.quantity, ri.hidden);
       }
     }
   }
@@ -293,7 +302,12 @@ export class WorldState {
     npcs: CachedNpc[] = [],
     monsters: CachedMonster[] = [],
     items: CachedItem[] = [],
-    roomItems: Array<{ roomId: string; itemId: string; quantity: number }> = [],
+    roomItems: Array<{
+      roomId: string;
+      itemId: string;
+      quantity: number;
+      hidden?: boolean;
+    }> = [],
   ): void {
     this.rooms.clear();
     this.roomsByEnumKey.clear();
@@ -308,7 +322,8 @@ export class WorldState {
     this.items.clear();
     this.roomItems.clear();
     for (const i of items) this.items.set(i.id, i);
-    for (const ri of roomItems) this.addItemToRoom(ri.roomId, ri.itemId, ri.quantity);
+    for (const ri of roomItems)
+      this.addItemToRoom(ri.roomId, ri.itemId, ri.quantity, ri.hidden ?? false);
     for (const r of rooms) {
       this.rooms.set(r.id, r);
       this.roomsByEnumKey.set(r.enumKey, r);
@@ -385,9 +400,27 @@ export class WorldState {
     return this.items.size;
   }
 
-  /** Stacks lying in a room. Empty array when none — never undefined, so
-   * callers do not each invent a fallback. */
+  /**
+   * Stacks lying VISIBLY in a room. Empty array when none — never undefined,
+   * so callers do not each invent a fallback.
+   *
+   * Visible-only by default, deliberately. Every existing caller — `look`,
+   * `get`, the room render — wants what a player can see, so the safe answer
+   * is the default one. A hidden item that leaked into `look` because a
+   * caller forgot to filter is a mechanic that silently does nothing.
+   */
   getItemsInRoom(roomId: string): RoomItemStack[] {
+    return (this.roomItems.get(roomId) ?? []).filter((s) => !s.hidden);
+  }
+
+  /** Stacks concealed in a room. Only `search` should call this. */
+  getHiddenItemsInRoom(roomId: string): RoomItemStack[] {
+    return (this.roomItems.get(roomId) ?? []).filter((s) => s.hidden);
+  }
+
+  /** Every stack in a room, hidden or not. For persistence, which must write
+   * back what it loaded rather than only the half a player can see. */
+  getAllItemsInRoom(roomId: string): RoomItemStack[] {
     return this.roomItems.get(roomId) ?? [];
   }
 
@@ -396,10 +429,16 @@ export class WorldState {
    * — `get rusty` should find "Rusty Dagger", because a player types what they
    * see rather than an exact string.
    */
-  findItemInRoom(query: string, roomId: string): RoomItemStack | undefined {
+  findItemInRoom(
+    query: string,
+    roomId: string,
+    opts: { hidden?: boolean } = {},
+  ): RoomItemStack | undefined {
     const q = query.trim().toLowerCase();
     if (!q) return undefined;
-    const stacks = this.getItemsInRoom(roomId);
+    const stacks = opts.hidden
+      ? this.getHiddenItemsInRoom(roomId)
+      : this.getItemsInRoom(roomId);
     return (
       stacks.find((s) => s.name.toLowerCase() === q) ??
       stacks.find((s) => s.name.toLowerCase().startsWith(q)) ??
@@ -407,21 +446,61 @@ export class WorldState {
     );
   }
 
-  /** Put `quantity` of an item into a room, merging into an existing stack. */
-  addItemToRoom(roomId: string, itemId: string, quantity = 1): void {
+  /**
+   * Put `quantity` of an item into a room, merging into an existing stack of
+   * the same visibility.
+   *
+   * Merging is keyed on (itemId, hidden), not itemId alone — see the note on
+   * `RoomItemStack.hidden`.
+   */
+  addItemToRoom(
+    roomId: string,
+    itemId: string,
+    quantity = 1,
+    hidden = false,
+  ): void {
     if (quantity <= 0) return;
     const item = this.items.get(itemId);
     if (!item) {
       throw new Error(`addItemToRoom: unknown itemId "${itemId}"`);
     }
     const stacks = this.roomItems.get(roomId) ?? [];
-    const existing = stacks.find((s) => s.itemId === itemId);
+    const existing = stacks.find(
+      (s) => s.itemId === itemId && s.hidden === hidden,
+    );
     if (existing) {
       existing.quantity += quantity;
     } else {
-      stacks.push({ itemId, name: item.name, quantity });
+      stacks.push({ itemId, name: item.name, quantity, hidden });
     }
     this.roomItems.set(roomId, stacks);
+  }
+
+  /**
+   * Reveal everything concealed in a room, merging each stack into its
+   * visible counterpart. Returns the names revealed, in the order found.
+   *
+   * All-or-nothing per room rather than one item per `search`: a player who
+   * has already searched successfully should not have to keep typing it to
+   * drain a room one object at a time.
+   */
+  revealHiddenItems(roomId: string): string[] {
+    const stacks = this.roomItems.get(roomId);
+    if (!stacks) return [];
+    const revealed = stacks.filter((s) => s.hidden);
+    if (revealed.length === 0) return [];
+
+    const names: string[] = [];
+    for (const stack of revealed) {
+      names.push(stack.name);
+      const index = stacks.indexOf(stack);
+      stacks.splice(index, 1);
+      // Re-add rather than flipping the flag in place, so a revealed stack
+      // merges with one already lying in the open instead of sitting beside
+      // it as a duplicate line in `look`.
+      this.addItemToRoom(roomId, stack.itemId, stack.quantity, false);
+    }
+    return names;
   }
 
   /**
@@ -433,10 +512,16 @@ export class WorldState {
    * Empty stacks are dropped rather than left at zero, so `look` never
    * advertises something that is not there.
    */
-  takeItemFromRoom(roomId: string, itemId: string): RoomItemStack | undefined {
+  takeItemFromRoom(
+    roomId: string,
+    itemId: string,
+    hidden = false,
+  ): RoomItemStack | undefined {
     const stacks = this.roomItems.get(roomId);
     if (!stacks) return undefined;
-    const index = stacks.findIndex((s) => s.itemId === itemId);
+    const index = stacks.findIndex(
+      (s) => s.itemId === itemId && s.hidden === hidden,
+    );
     if (index === -1) return undefined;
     const stack = stacks[index]!;
     const before = { ...stack };
