@@ -185,3 +185,66 @@ describe("ws-server + world end-to-end", () => {
     expect(closed.code).toBe(1000);
   });
 });
+
+describe("AUTH_OK reports the world's own capabilities", () => {
+  /**
+   * The point of sending these over the wire is that they describe the
+   * process actually serving the connection, so a client cannot be built
+   * against one mode and connected to another. That only holds if the frame
+   * follows the world rather than a default — which is what this asserts.
+   */
+  async function bootWithMode(mode: "exploration" | "pve" | "pvp") {
+    const http = createServer();
+    const world = new WorldState(mode);
+    world.hydrate([]);
+    const server = new MudWsServer({ server: http, world });
+    await new Promise<void>((resolve, reject) => {
+      http.listen(0, "127.0.0.1", () => resolve());
+      http.once("error", reject);
+    });
+    const { port } = http.address() as AddressInfo;
+    return {
+      url: `ws://127.0.0.1:${port}`,
+      async close() {
+        await server.close();
+        await new Promise<void>((resolve) => http.close(() => resolve()));
+      },
+    };
+  }
+
+  beforeEach(() => {
+    process.env.JWT_SECRET = SECRET;
+  });
+  afterEach(() => {
+    delete process.env.JWT_SECRET;
+  });
+
+  it.each([
+    ["exploration", false, false] as const,
+    ["pve", true, false] as const,
+    ["pvp", true, true] as const,
+  ])("reports %s as combat=%s pvp=%s", async (mode, combat, pvp) => {
+    const booted = await bootWithMode(mode);
+    try {
+      const client = new WebSocket(booted.url);
+      await new Promise<void>((resolve, reject) => {
+        client.once("open", resolve);
+        client.once("error", reject);
+      });
+      client.send(JSON.stringify({ type: "AUTH", token: token() }));
+
+      const frame = JSON.parse((await nextFrames(client, 1))[0]!) as {
+        type: string;
+        mode: string;
+        capabilities: { combat: boolean; playerVersusPlayer: boolean };
+      };
+      expect(frame.type).toBe("AUTH_OK");
+      expect(frame.mode).toBe(mode);
+      expect(frame.capabilities.combat).toBe(combat);
+      expect(frame.capabilities.playerVersusPlayer).toBe(pvp);
+      client.close();
+    } finally {
+      await booted.close();
+    }
+  });
+});
