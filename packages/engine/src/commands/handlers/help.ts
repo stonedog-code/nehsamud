@@ -30,6 +30,8 @@ export const helpHandler: CommandHandler = ({ world }) => {
   }
 
   lines.push(
+    "  get <item>          — pick something up off the floor",
+    "  drop <item>         — put something down here",
     "  inventory (i)       — list what you're carrying",
     "  help (h, ?)         — show this list",
     "  quit (q)            — disconnect",

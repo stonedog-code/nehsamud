@@ -12,7 +12,12 @@ export { ITEMS } from "./items.js";
 export { MONSTERS } from "./monsters.js";
 export { NPCS } from "./npcs.js";
 export { EFFECTS } from "./effects.js";
-export { MONSTER_SPAWNS, type MonsterSpawnFixture } from "./spawns.js";
+export {
+  ITEM_PLACEMENTS,
+  MONSTER_SPAWNS,
+  type ItemPlacementFixture,
+  type MonsterSpawnFixture,
+} from "./spawns.js";
 
 export type {
   Alignment,

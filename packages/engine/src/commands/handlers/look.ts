@@ -39,6 +39,17 @@ function renderRoom(world: WorldState, room: CachedRoom): string[] {
         .join(", ")}.`,
     );
   }
+  // Items on the floor. Without this line `get` is unusable: a player has no
+  // way to learn what is here to pick up, and guessing nouns is not a game
+  // mechanic.
+  const items = world.getItemsInRoom(room.id);
+  if (items.length > 0) {
+    lines.push(
+      `Lying here: ${items
+        .map((i) => (i.quantity > 1 ? `${i.name} (x${i.quantity})` : i.name))
+        .join(", ")}.`,
+    );
+  }
   // Compass order, not alphabetical — see DIRECTIONS in the parser.
   const exits = sortDirections(Object.keys(room.exits));
   if (exits.length > 0) {

@@ -20,6 +20,7 @@ import type { PrismaClient } from "@nehsamud/engine-db";
 import {
   CLASSES,
   ITEMS,
+  ITEM_PLACEMENTS,
   MONSTERS,
   NPCS,
   RACES,
@@ -31,6 +32,9 @@ export interface SeedResult {
   classes: number;
   rooms: number;
   items: number;
+  /** Item stacks newly placed on a floor. Zero on a re-run, because rooms
+   * that already have contents are left alone — see seedItemPlacements. */
+  placements: number;
   monsters: number;
   npcs: number;
 }
@@ -42,9 +46,11 @@ export async function seedCatalog(prisma: PrismaClient): Promise<SeedResult> {
   // before exit resolution.
   const rooms = await seedRooms(prisma);
   const items = await seedItems(prisma);
+  // After rooms AND items — it joins the two.
+  const placements = await seedItemPlacements(prisma);
   const monsters = await seedMonsters(prisma);
   const npcs = await seedNpcs(prisma);
-  return { races, classes, rooms, items, monsters, npcs };
+  return { races, classes, rooms, items, placements, monsters, npcs };
 }
 
 async function seedRaces(prisma: PrismaClient): Promise<number> {
@@ -154,6 +160,62 @@ async function seedItems(prisma: PrismaClient): Promise<number> {
     });
   }
   return ITEMS.length;
+}
+
+/**
+ * Place the starting items on the floor.
+ *
+ * Idempotent PER ROOM, not per item: a room that already has anything in it
+ * is left completely alone. That is what stops a re-run duplicating a sword
+ * and — the case that actually matters — stops it sweeping away something a
+ * player dropped. Room contents persist, so this table is not the seed's to
+ * own after the first fill.
+ *
+ * Placements are therefore grouped by room and applied as a unit. The first
+ * version skipped item-by-item and quietly placed only the FIRST of a room's
+ * items, because by the time it looked at the second the room was no longer
+ * empty. The seed reported `placed=3` for four placements, which is the only
+ * reason it was noticed.
+ */
+async function seedItemPlacements(prisma: PrismaClient): Promise<number> {
+  const byRoom = new Map<string, typeof ITEM_PLACEMENTS>();
+  for (const placement of ITEM_PLACEMENTS) {
+    const list = byRoom.get(placement.roomEnumKey) ?? [];
+    list.push(placement);
+    byRoom.set(placement.roomEnumKey, list);
+  }
+
+  let placed = 0;
+  for (const [roomEnumKey, placements] of byRoom) {
+    const room = await prisma.mudRoom.findUnique({
+      where: { enumKey: roomEnumKey },
+      select: { id: true },
+    });
+    if (!room) continue;
+
+    const occupied = await prisma.mudRoomItem.findFirst({
+      where: { roomId: room.id },
+      select: { id: true },
+    });
+    if (occupied) continue;
+
+    for (const placement of placements) {
+      const item = await prisma.mudItem.findUnique({
+        where: { name: placement.itemName },
+        select: { id: true },
+      });
+      if (!item) continue;
+      await prisma.mudRoomItem.create({
+        data: {
+          roomId: room.id,
+          itemId: item.id,
+          quantity: placement.quantity ?? 1,
+        },
+      });
+      placed += 1;
+    }
+  }
+  return placed;
 }
 
 async function seedMonsters(prisma: PrismaClient): Promise<number> {

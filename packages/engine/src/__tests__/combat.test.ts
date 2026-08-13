@@ -79,6 +79,7 @@ function newSession(roomId: string): SessionState {
     maxHp: DEFAULT_MAX_HP,
     experience: 0,
     level: 1,
+    inventory: [],
     defeated: false,
   };
 }
