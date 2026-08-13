@@ -34,6 +34,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { PrismaClient } from "@nehsamud/engine-db";
 
 import type { AiServices } from "./ai/factory.js";
+import type { Rng } from "./combat.js";
 import { verifyHopperToken } from "./auth.js";
 import {
   DEFAULT_GAME_MODE,
@@ -140,6 +141,16 @@ export interface MudWsServerOptions {
   /** Optional OpenTelemetry tracer. When provided, every command
    * dispatch is wrapped in a span. When unset, no spans created. */
   tracer?: Tracer;
+  /**
+   * Source of randomness for combat rolls. Seeded in tests so a fight is
+   * reproducible and assertable; unset in production, where each round
+   * seeds itself from the clock.
+   *
+   * Threaded the same way as `tracer` deliberately — a handler that rolls
+   * needs the same kind of injected seam as one that traces, and inventing
+   * a second mechanism for it would be a second thing to remember.
+   */
+  rng?: Rng;
 }
 
 const DEFAULT_SPAWN_ROOM_ENUM_KEY = "TOWNSMEE_TOWNSQUARE";
@@ -154,6 +165,7 @@ export class MudWsServer {
   private readonly prisma: PrismaClient | undefined;
   private readonly roomArt: RoomArtGenerator;
   private readonly tracer: Tracer | undefined;
+  private readonly rng: Rng | undefined;
   /** Map of socket → MudPlayer.id so we know which row to update
    * after each dispatch. */
   private readonly playerIdBySocket = new WeakMap<WebSocket, string>();
@@ -171,6 +183,7 @@ export class MudWsServer {
     this.prisma = options.prisma;
     this.roomArt = options.roomArt ?? new RoomArtGenerator();
     this.tracer = options.tracer;
+    this.rng = options.rng;
     this.wss = new WebSocketServer({
       server: options.server,
       port: options.port,
@@ -350,6 +363,7 @@ export class MudWsServer {
       command: { verb: "look", args: [], rest: "" },
       ai: this.ai,
       tracer: this.tracer,
+      rng: this.rng,
     });
     for (const line of look.response.lines) {
       send(socket, { type: "SERVER_MESSAGE", message: line });
@@ -457,6 +471,7 @@ export class MudWsServer {
         command,
         ai: this.ai,
         tracer: this.tracer,
+        rng: this.rng,
       });
       for (const line of result.response.lines) {
         send(socket, { type: "SERVER_MESSAGE", message: line });

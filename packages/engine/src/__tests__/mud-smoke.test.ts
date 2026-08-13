@@ -40,6 +40,7 @@ import type {
   CachedRoom,
 } from "../world/world-state.js";
 import { WorldState } from "../world/world-state.js";
+import { createRng } from "../combat.js";
 import { MudWsServer } from "../ws-server.js";
 
 const SECRET = "mud-smoke-secret";
@@ -215,6 +216,10 @@ async function bootWsOnly(world: WorldState, prisma?: FakePrisma): Promise<Boote
     server: http,
     world,
     prisma: fake as unknown as ConstructorParameters<typeof MudWsServer>[0]["prisma"],
+    // Seeded so combat is reproducible. Without this every roll comes from
+    // the clock, and a smoke suite that asserts damage would be asserting
+    // whatever today's numbers happened to be.
+    rng: createRng(20260813),
   });
   await new Promise<void>((resolve, reject) => {
     http.listen(0, "127.0.0.1", () => resolve());
@@ -533,16 +538,38 @@ describe("smoke / 5: multiple users share world state", () => {
     userB.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "south" }));
     await Promise.all([drainUntilSilent(userA), drainUntilSilent(userB)]);
 
-    // A hits once: goblin drops from 15 → 10 HP.
-    userA.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "attack goblin" }));
-    const aSwing = parseMessages(await drainUntilSilent(userA));
-    expect(aSwing.some((l) => l.includes("10/15 HP left"))).toBe(true);
+    // Damage varies and a blow can miss, so the exact numbers this used to
+    // assert are no longer the point — and pinning them would assert the
+    // ABSENCE of variable combat. What must hold is the shared-world
+    // invariant: B's swing sees A's damage, never a fresh monster.
+    const remainingHp = (lines: string[]): number | undefined => {
+      for (const line of lines) {
+        const m = /has (\d+)\/(\d+) HP left/.exec(line);
+        if (m) return Number(m[1]);
+      }
+      return undefined;
+    };
 
-    // B's swing must see A's damage, not a fresh 15 HP — that's the
-    // multi-user shared-world invariant. B drops it to 5 HP.
+    // A swings until it actually lands, so the comparison below is meaningful
+    // rather than trivially true on a miss.
+    let aHp: number | undefined;
+    for (let i = 0; i < 20 && (aHp === undefined || aHp === MON_GOBLIN.baseHp); i += 1) {
+      userA.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "attack goblin" }));
+      aHp = remainingHp(parseMessages(await drainUntilSilent(userA)));
+      if (aHp === undefined) break; // it died — covered by the combat test
+    }
+    expect(aHp).toBeDefined();
+    expect(aHp!).toBeLessThan(MON_GOBLIN.baseHp);
+
     userB.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "attack goblin" }));
-    const bSwing = parseMessages(await drainUntilSilent(userB));
-    expect(bSwing.some((l) => l.includes("5/15 HP left"))).toBe(true);
+    const bHp = remainingHp(parseMessages(await drainUntilSilent(userB)));
+
+    // B either sees the monster at or below where A left it, or kills it.
+    // What it must never see is the monster back at full health.
+    if (bHp !== undefined) {
+      expect(bHp).toBeLessThanOrEqual(aHp!);
+      expect(bHp).toBeLessThan(MON_GOBLIN.baseHp);
+    }
 
     // Both players have their own session/player row.
     expect(booted.prisma._rows.has("user-A")).toBe(true);

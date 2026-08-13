@@ -4,6 +4,7 @@
  * Pure unit tests against a hydrated WorldState; no DB, no sockets.
  */
 
+import { createRng } from "../combat.js";
 import { dispatch } from "../commands/dispatch.js";
 import { PLAYER_BASE_DAMAGE } from "../commands/handlers/attack.js";
 import {
@@ -157,15 +158,18 @@ describe("attack handler", () => {
     const w = buildWorld();
     w.spawnMonster("goblin", "room-lower");
     const session = newSession("room-lower");
+    // Seeded: damage now varies and a swing can miss, so a fixed-damage
+    // assertion would be asserting the absence of the feature. Seed 2 lands
+    // both blows — player 4 (goblin survives at 8-4), goblin 2.
     const lines = (await dispatch({
       world: w,
       session,
       command: parseCommand("attack goblin"),
+      rng: createRng(2),
     })).response.lines;
-    expect(lines[0]).toContain(`for ${PLAYER_BASE_DAMAGE} damage`);
+    expect(lines[0]).toContain("for 4 damage");
     expect(lines.some((l) => l.includes("HP left"))).toBe(true);
-    expect(lines.some((l) => l.includes("hits you for"))).toBe(true);
-    // PLAYER_BASE_DAMAGE=5, goblin baseHp=8 → goblin alive at 3
+    expect(lines.some((l) => l.includes("for 2 damage"))).toBe(true);
     expect(w.getMonstersInRoom("room-lower")).toHaveLength(1);
     expect(session.currentHp).toBe(DEFAULT_MAX_HP - 2);
   });
@@ -175,13 +179,11 @@ describe("attack handler", () => {
     w.spawnMonster("goblin", "room-lower"); // 8 HP
     w.spawnMonster("goblin", "room-lower"); // a second one
     const session = newSession("room-lower");
-    // Two swings: 5 + 5 = 10, kills at the second.
-    await dispatch({ world: w, session, command: parseCommand("attack goblin") });
-    const result = await dispatch({
-      world: w,
-      session,
-      command: parseCommand("attack goblin"),
-    });
+    session.currentHp = 10_000; // the kill is the subject, not survival
+    // Swing until it dies. Damage varies and blows can miss, so a fixed swing
+    // count made this test FLAKY rather than wrong — it passed most runs and
+    // failed on the ones where a swing missed.
+    const result = { response: { lines: await swingUntilDead(w, session) } };
     expect(result.response.lines.some((l) => l.includes("falls"))).toBe(true);
     expect(session.experience).toBe(20);
     // Second goblin still alive.
@@ -192,11 +194,18 @@ describe("attack handler", () => {
     const w = buildWorld();
     w.spawnMonster("ogre", "room-lower"); // 50 dmg per round
     const session = newSession("room-lower");
-    const first = await dispatch({
-      world: w,
-      session,
-      command: parseCommand("attack ogre"),
-    });
+    // Keep swinging until the ogre's counter lands — it hits for 50 against a
+    // 30 HP player, so one landed blow is lethal, but it can miss.
+    const rng = createRng(3);
+    let first = { response: { lines: [] as string[] } };
+    for (let i = 0; i < 50 && !session.defeated; i += 1) {
+      first = await dispatch({
+        world: w,
+        session,
+        command: parseCommand("attack ogre"),
+        rng,
+      });
+    }
     expect(session.defeated).toBe(true);
     expect(session.currentHp).toBe(0);
     expect(first.response.lines.some((l) => l.includes("collapse"))).toBe(true);
@@ -283,13 +292,10 @@ describe("levelling on a kill", () => {
     // One goblin short of level 2.
     session.experience = xpForLevel(2) - goblin.experience;
 
-    // Two swings: PLAYER_BASE_DAMAGE=5 against this goblin's baseHp=8.
-    await dispatch({ world, session, command: parseCommand("attack goblin") });
-    const lines = (await dispatch({
-      world,
-      session,
-      command: parseCommand("attack goblin"),
-    })).response.lines;
+    // Swing until it dies. The number of swings is no longer fixed — damage
+    // varies and blows can miss — so asserting a count would assert the
+    // absence of the feature this file now tests.
+    const lines = await swingUntilDead(world, session);
 
     expect(session.level).toBe(2);
     expect(lines.some((l) => l.includes("reached level 2"))).toBe(true);
@@ -301,11 +307,9 @@ describe("levelling on a kill", () => {
     const goblin = world.spawnMonster("goblin", "room-lower");
     const session = newSession("room-lower");
     session.experience = xpForLevel(2) - goblin.experience;
-    session.currentHp = 40; // survives the counter-attack; HP checked below
+    session.currentHp = 400; // survives every counter-attack; HP checked below
 
-    await dispatch({ world, session, command: parseCommand("attack goblin") });
-    const hpBeforeKill = session.currentHp;
-    await dispatch({ world, session, command: parseCommand("attack goblin") });
+    const hpBeforeKill = await swingUntilDeadTrackingHp(world, session);
 
     expect(session.maxHp).toBe(DEFAULT_MAX_HP + HP_PER_LEVEL);
     // The killing blow takes no counter-attack, so the only change to current
@@ -318,12 +322,7 @@ describe("levelling on a kill", () => {
     world.spawnMonster("goblin", "room-lower");
     const session = newSession("room-lower");
 
-    await dispatch({ world, session, command: parseCommand("attack goblin") });
-    const lines = (await dispatch({
-      world,
-      session,
-      command: parseCommand("attack goblin"),
-    })).response.lines;
+    const lines = await swingUntilDead(world, session);
 
     expect(session.level).toBe(1);
     expect(lines.some((l) => l.includes("reached level"))).toBe(false);
@@ -337,10 +336,60 @@ describe("levelling on a kill", () => {
     const session = newSession("room-lower");
     for (let i = 0; i < 8; i += 1) {
       world.spawnMonster("goblin", "room-lower");
-      await dispatch({ world, session, command: parseCommand("attack goblin") });
-      await dispatch({ world, session, command: parseCommand("attack goblin") });
-      await dispatch({ world, session, command: parseCommand("attack goblin") });
+      session.currentHp = 10_000; // survive the grind; levelling is the subject
+      await swingUntilDead(world, session);
       expect(session.level).toBe(levelForXp(session.experience));
     }
   });
 });
+
+/**
+ * Swing until the goblin dies, returning the killing blow's lines.
+ *
+ * Combat is no longer deterministic in the number of swings — damage varies
+ * and blows can miss — so tests about the CONSEQUENCE of a kill must not
+ * assert how many attacks it took. Seeded so the sequence is reproducible;
+ * bounded so a bug that makes a monster unkillable fails loudly instead of
+ * hanging the suite.
+ */
+async function swingUntilDead(
+  world: WorldState,
+  session: SessionState,
+  seed = 7,
+): Promise<string[]> {
+  const rng = createRng(seed);
+  for (let i = 0; i < 200; i += 1) {
+    const lines = (
+      await dispatch({
+        world,
+        session,
+        command: parseCommand("attack goblin"),
+        rng,
+      })
+    ).response.lines;
+    if (lines.some((l) => l.includes("falls"))) return lines;
+  }
+  throw new Error("goblin survived 200 swings — combat cannot resolve");
+}
+
+/** As above, but reports current HP immediately before the killing blow. */
+async function swingUntilDeadTrackingHp(
+  world: WorldState,
+  session: SessionState,
+  seed = 7,
+): Promise<number> {
+  const rng = createRng(seed);
+  for (let i = 0; i < 200; i += 1) {
+    const before = session.currentHp;
+    const lines = (
+      await dispatch({
+        world,
+        session,
+        command: parseCommand("attack goblin"),
+        rng,
+      })
+    ).response.lines;
+    if (lines.some((l) => l.includes("falls"))) return before;
+  }
+  throw new Error("goblin survived 200 swings — combat cannot resolve");
+}
