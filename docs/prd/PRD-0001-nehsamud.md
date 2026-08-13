@@ -1,6 +1,13 @@
 # PRD-0001 — NehsaMUD
 
-**Status:** Draft
+**Status:** Phases 0–2 shipped; 3–9 not started
+
+> A status line is a claim, not evidence. What "shipped" means here is
+> narrow and worth stating: the engine runs, enforces its modes, and reports
+> them to clients. **None of the progression the game is actually about
+> exists yet** — experience does not persist, no character can gain a level,
+> and the world is one town. Read §7 for what is and is not built before
+> relying on any requirement below being live.
 **Owner:** Jesse Stone
 **Created:** 2026-08-12
 **Applies to:** `stonedog-code/nehsamud` (engine + standalone app), and the
@@ -83,6 +90,32 @@ Numbered and testable. **MUST** is v1 scope; **SHOULD** is v1 if it fits.
   each other.
 - **R6** In `pvp`, players may additionally target each other.
 - **R7** Each mode is a separate deployment on its own host.
+- **R7a** The server **tells the client** what the world permits, in the
+  `AUTH_OK` frame. A client MUST NOT determine capabilities from a package it
+  was compiled against.
+- **R7b** A client that cannot read the capabilities — an older server, a
+  malformed or partial payload, or the moment before `AUTH_OK` arrives — MUST
+  assume **nothing is permitted**. A partial payload is rejected wholesale
+  rather than field by field.
+
+> **Why R7a, since a shared constant would be simpler.** It was tried, and
+> reverted. Two reasons it is worse, one practical and one that matters more:
+>
+> A shared constant is only correct when both sides were built from the same
+> version. The frame is answered by the process actually serving *this*
+> connection, so a client pointed at a different world learns the truth from
+> it. The values cannot drift because they are never copied — which is a
+> stronger guarantee than the constant was bought for.
+>
+> And it kept the engine out of browser bundles. Sharing the table at compile
+> time meant a package carrying express, Prisma and an OpenTelemetry SDK sat
+> at the edge of the client build, and needed hand-written module mapping in
+> three separate test configs, across a submodule boundary in a second GitHub
+> organisation, to share five booleans.
+>
+> Declaring the *shape* of the frame in a client is not the duplication this
+> forbids. Every client declares what it receives; it is the **data** that
+> must have one source, and the data arrives at runtime.
 
 > **R3 and R4 are both required, deliberately.** Either alone leaves a
 > reachable path to combat in the build whose entire premise is that there
@@ -179,6 +212,22 @@ WebSocket. First frame from a new socket must be `AUTH`; anything else closes
 the socket with 4401. HTTP sidecar exposes `/health`, `/metrics`,
 `/capabilities`.
 
+`AUTH_OK` carries the world's mode and capabilities, so a client never has to
+infer them (R7a):
+
+```json
+{ "type": "AUTH_OK", "userId": "…",
+  "mode": "exploration",
+  "capabilities": { "monsters": false, "combat": false,
+                    "playerVersusPlayer": false, "looting": false,
+                    "scripting": false } }
+```
+
+The fields are additive — a client that ignores them still works. A server
+with no world loaded reports the **safe** mode rather than omitting them,
+because a client reading a missing capability as "combat allowed" fails in
+the dangerous direction.
+
 ### Auth
 
 The engine verifies an HS256 JWT, audience-pinned to the MUD, and the
@@ -206,9 +255,9 @@ Each phase is a reviewable slice; later phases assume earlier ones.
 
 | Phase | Delivers |
 |---|---|
-| **0** | This PRD, the app scaffold, the mode model. *(this change)* |
-| **1** | Game modes in the engine — R1–R7. Blocks the extraction. |
-| **2** | Engine extraction into nehsamud; both consumers build from it. |
+| **0** | ✅ This PRD, the app scaffold, the mode model. |
+| **1** | ✅ Game modes in the engine — R1–R7, plus R7a/R7b over the wire. |
+| **2** | ✅ Engine extraction into nehsamud. |
 | **3** | Progression — XP persistence, the 1–100 curve, race/class stats. R9, R16–R19. |
 | **4** | World — diagonals, areas beyond the town. R12–R14. |
 | **5** | Verb parity — `get`/`drop`/`say`/`equip`/`rest`/… |
