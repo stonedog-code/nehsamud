@@ -1,0 +1,336 @@
+// Prisma schema for the hopper-mud Postgres tables. All tables live
+// in the `mud` Postgres schema (set via `previewFeatures = ["multiSchema"]`
+// + the `@@schema("mud")` annotation on each model). MudPlayer carries
+// a FK to public.user.user_id so a Hopper user can own one or more
+// MUD characters.
+//
+// Versioning: the Python backend is the primary writer for character
+// state (position, hp, inventory contents). Lookup tables — Race,
+// Class, Item, Monster, Room — are seeded from migrations and treated
+// as read-mostly catalog by the Python code.
+
+generator client {
+  // multiSchema is built in to Prisma 7+; the preview-features flag
+  // used in 6.x is no longer needed (Prisma warns when present).
+  provider = "prisma-client-js"
+  // Generate INTO this package, not the workspace-root
+  // `node_modules/.prisma/client`. The hopper-db package also uses
+  // a Prisma generator targeting the workspace-root location; if we
+  // shared that path, whichever package ran `prisma generate` last
+  // would clobber the other's models. Keeping each package's client
+  // local lets both schemas coexist.
+  // Lives at the package root so the same relative path
+  // `../generated/client/index.js` resolves correctly from both
+  // src/index.ts (during dev) and dist/index.js (after tsc build).
+  // The `src/generated/` variant fails post-build because
+  // dist/generated/ never gets populated.
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["mud", "public"]
+}
+
+/// Shadow of the public.user row that MudPlayer references. We don't
+/// own this table — the main hopper-db migration creates and manages
+/// it — but Prisma requires the model to exist for the FK relation
+/// to type-check. `@@schema("public")` points at the existing table
+/// and `@@ignore` keeps the generated client from offering CRUD on it.
+model User {
+  userId  String      @id @map("user_id") @db.Uuid
+  players MudPlayer[]
+
+  @@map("user")
+  @@ignore
+  @@schema("public")
+}
+
+/// A Hopper user's MUD character. One Hopper user can have multiple
+/// characters (the Login modal supports a single character today, but
+/// the model accommodates future expansion). Position is tracked via
+/// roomId; null means the character isn't currently spawned.
+model MudPlayer {
+  id          String   @id @default(uuid()) @db.Uuid
+  /// FK to public.user.user_id — the Hopper account owning this MUD
+  /// character.
+  userId      String   @map("user_id") @db.Uuid
+  name        String   @unique @db.VarChar(50)
+  raceId      String   @map("race_id") @db.Uuid
+  classId     String   @map("class_id") @db.Uuid
+  /// Current room. Null when the character hasn't spawned yet or is
+  /// in a transient state. The Python world service updates this on
+  /// every `move` event.
+  roomId      String?  @map("room_id") @db.Uuid
+  level       Int      @default(1)
+  experience  Int      @default(0)
+  currentHp   Int      @default(10) @map("current_hp")
+  maxHp       Int      @default(10) @map("max_hp")
+  /// Stats — the six core attributes the upstream MUD tracks. Default
+  /// values come from the Race + Class modifiers applied at creation
+  /// time; the columns store the post-modifier values for fast reads.
+  strength     Int @default(10)
+  intelligence Int @default(10)
+  wisdom       Int @default(10)
+  charisma     Int @default(10)
+  constitution Int @default(10)
+  dexterity    Int @default(10)
+  luck         Int @default(10)
+  /// Optional cosmetic appearance fields. The upstream NewUserRequest
+  /// sends these; we keep them as nullable strings so PR-3c's trimmed
+  /// creation flow (no appearance pickers) works today.
+  bodyType        String?  @map("body_type") @db.VarChar(50)
+  sex             String?  @db.VarChar(50)
+  eyeColor        String?  @map("eye_color") @db.VarChar(50)
+  eyeBrow         String?  @map("eye_brow") @db.VarChar(50)
+  hairColor       String?  @map("hair_color") @db.VarChar(50)
+  hairStyle       String?  @map("hair_style") @db.VarChar(50)
+  facialHairStyle String?  @map("facial_hair_style") @db.VarChar(50)
+  /// Argon2 hash of the player's PIN. Optional — guest characters
+  /// have no PIN.
+  pinHash    String?  @map("pin_hash") @db.VarChar(255)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  /// Last time the player was seen in-game. Used for "online players"
+  /// queries and stale-character cleanup. Null until first login.
+  lastSeenAt DateTime? @map("last_seen_at")
+
+  user      User           @relation(fields: [userId], references: [userId], onDelete: Cascade) @ignore
+  race      MudRace        @relation(fields: [raceId], references: [id])
+  class     MudClass       @relation(fields: [classId], references: [id])
+  room      MudRoom?       @relation(fields: [roomId], references: [id])
+  inventory MudInventory[]
+
+  @@index([userId])
+  @@map("player")
+  @@schema("mud")
+}
+
+/// Playable race catalog. Seeded from migration; the Python backend
+/// reads it via SELECT on connection. Maps to the upstream's
+/// React/Races/* folder + the /v1/mud/races endpoint.
+model MudRace {
+  id                       String      @id @default(uuid()) @db.Uuid
+  /// Lowercase slug — the wire value the client/server compare on.
+  slug                     String      @unique @db.VarChar(50)
+  name                     String      @unique @db.VarChar(50)
+  description              String
+  abilities                String[]
+  directives               String[]
+  /// Stat modifiers applied at character creation.
+  strengthMod              Int         @default(0) @map("strength_mod")
+  intelligenceMod          Int         @default(0) @map("intelligence_mod")
+  wisdomMod                Int         @default(0) @map("wisdom_mod")
+  charismaMod              Int         @default(0) @map("charisma_mod")
+  constitutionMod          Int         @default(0) @map("constitution_mod")
+  dexterityMod             Int         @default(0) @map("dexterity_mod")
+  luckMod                  Int         @default(0) @map("luck_mod")
+  baseExperienceAdjustment Int         @default(0) @map("base_experience_adjustment")
+  playable                 Boolean     @default(true)
+  createdAt                DateTime    @default(now()) @map("created_at")
+  updatedAt                DateTime    @updatedAt @map("updated_at")
+
+  players MudPlayer[]
+
+  @@map("race")
+  @@schema("mud")
+}
+
+/// Playable class catalog. Same shape as MudRace.
+model MudClass {
+  id                       String      @id @default(uuid()) @db.Uuid
+  slug                     String      @unique @db.VarChar(50)
+  name                     String      @unique @db.VarChar(50)
+  description              String
+  abilities                String[]
+  directives               String[]
+  strengthMod              Int         @default(0) @map("strength_mod")
+  intelligenceMod          Int         @default(0) @map("intelligence_mod")
+  wisdomMod                Int         @default(0) @map("wisdom_mod")
+  charismaMod              Int         @default(0) @map("charisma_mod")
+  constitutionMod          Int         @default(0) @map("constitution_mod")
+  dexterityMod             Int         @default(0) @map("dexterity_mod")
+  luckMod                  Int         @default(0) @map("luck_mod")
+  baseExperienceAdjustment Int         @default(0) @map("base_experience_adjustment")
+  playable                 Boolean     @default(true)
+  createdAt                DateTime    @default(now()) @map("created_at")
+  updatedAt                DateTime    @updatedAt @map("updated_at")
+
+  players MudPlayer[]
+
+  @@map("class")
+  @@schema("mud")
+}
+
+/// World room. The upstream Python `room_registry` mirrors this on
+/// boot; rooms are persisted so map/exit edits survive restarts.
+/// Exits are stored as JSON: { north: roomId, south: roomId, … }.
+model MudRoom {
+  id          String   @id @default(uuid()) @db.Uuid
+  /// Code reference. Stable enum-style name from
+  /// core.enums.rooms.RoomEnum so the Python side can lookup spawn
+  /// rooms without UUID hardcoding.
+  enumKey     String   @unique @map("enum_key") @db.VarChar(100)
+  name        String   @db.VarChar(255)
+  description String
+  exits       Json     @default("{}")
+  /// AI-generated room art filename when present.
+  imageName   String?  @map("image_name") @db.VarChar(255)
+  /// Environment tag (e.g. "townsmee", "forest", "cave"). Originally
+  /// a separate `environments` table in the Python schema; collapsed
+  /// to a denormalized column for the focused rewrite — the table
+  /// only ever held ~10 rows used for ambient-event selection.
+  environment String?  @db.VarChar(50)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  players MudPlayer[]
+  items   MudRoomItem[]
+  npcs    MudNpc[]
+
+  @@map("room")
+  @@schema("mud")
+}
+
+/// Item catalog. Items in a player's inventory or in a room are
+/// instances pointing at this row; equipment slot + damage values
+/// come from here.
+model MudItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique @db.VarChar(255)
+  description String
+  /// Matches MudItemType in hopper-play (numeric IntEnum mirrored
+  /// from the Python `core.enums.item_type.ItemType`).
+  type        Int
+  /// For weapons: base damage. For armor: damage reduction. Null
+  /// otherwise.
+  baseValue   Int?     @map("base_value")
+  weight      Int      @default(1)
+  /// AI-generated item art filename when present.
+  imageName   String?  @map("image_name") @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  playerInventories MudInventory[]
+  roomDrops         MudRoomItem[]
+
+  @@map("item")
+  @@schema("mud")
+}
+
+/// A specific item in a specific player's inventory. The Python world
+/// service writes here on every `pickup`/`drop`/`give` event.
+model MudInventory {
+  id        String   @id @default(uuid()) @db.Uuid
+  playerId  String   @map("player_id") @db.Uuid
+  itemId    String   @map("item_id") @db.Uuid
+  /// Stack count for stackable items (potions, gold coins). 1 for
+  /// uniques.
+  quantity  Int      @default(1)
+  /// True when this is the player's currently-equipped instance of
+  /// the item's slot. Mutually exclusive across a player's items in
+  /// the same MudItem.type bucket (no DB enforcement today; the
+  /// Python equip handler manages the invariant).
+  equipped  Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  player MudPlayer @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  item   MudItem   @relation(fields: [itemId], references: [id])
+
+  @@index([playerId])
+  @@map("inventory")
+  @@schema("mud")
+}
+
+/// An item dropped in a room. Persists across restarts so a town
+/// square littered with items survives a server reboot.
+model MudRoomItem {
+  id        String   @id @default(uuid()) @db.Uuid
+  roomId    String   @map("room_id") @db.Uuid
+  itemId    String   @map("item_id") @db.Uuid
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  room MudRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  item MudItem @relation(fields: [itemId], references: [id])
+
+  @@index([roomId])
+  @@map("room_item")
+  @@schema("mud")
+}
+
+/// Monster catalog. Spawned by the Python world's mob-spawner; each
+/// fight references this row for base stats. Per-fight state (current
+/// hp, room location) lives in transient Python-side structures, not
+/// here — monsters respawn from the catalog so we don't store
+/// fight-instance rows.
+model MudMonster {
+  id           String   @id @default(uuid()) @db.Uuid
+  slug         String   @unique @db.VarChar(50)
+  name         String   @db.VarChar(255)
+  description  String
+  /// Tier / difficulty for spawn selection.
+  level        Int      @default(1)
+  baseHp       Int      @map("base_hp")
+  baseDamage   Int      @map("base_damage")
+  experience   Int      @default(0)
+  /// Behavior axis: "lawful_good" | "good" | "neutral" | "evil".
+  /// Denormalized from the Python `alignments` lookup table; that
+  /// table only ever held four rows that mapped to attack logic, so
+  /// a string column is simpler than a join.
+  alignment    String   @default("neutral") @db.VarChar(20)
+  /// Coarse type axis: "humanoid" | "beast" | "undead" | "elemental"
+  /// | etc. Originally a `mob_types` table, collapsed for the same
+  /// reason as alignment.
+  mobType      String   @default("humanoid") @map("mob_type") @db.VarChar(20)
+  /// AI-generated monster art filename when present.
+  imageName    String?  @map("image_name") @db.VarChar(255)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("monster")
+  @@schema("mud")
+}
+
+/// NPC catalog. NPCs are non-hostile mobs that occupy a fixed room
+/// and can be `talked` to; the Phase 5 NPC-dialog system will read
+/// `intelligenceMode` to decide whether to canned-reply or send the
+/// prompt to the text-generation provider. Distinct from MudMonster
+/// because the behavior axis is "dialog + economy" rather than
+/// "combat".
+model MudNpc {
+  id                String   @id @default(uuid()) @db.Uuid
+  slug              String   @unique @db.VarChar(50)
+  name              String   @db.VarChar(255)
+  description       String
+  /// Anchor room. Null when the NPC isn't currently placed in the
+  /// world — the seed sets this; runtime placement is managed by
+  /// the Phase 5 NPC service.
+  roomId            String?  @map("room_id") @db.Uuid
+  /// "he" | "she" | "they" — referenced by canned-reply templating.
+  pronoun           String   @default("they") @db.VarChar(10)
+  /// Same axis as MudMonster.alignment; influences canned reactions
+  /// to player aggression.
+  alignment         String   @default("neutral") @db.VarChar(20)
+  /// "canned" | "ai" — canned uses the static `dialogLines` array;
+  /// ai routes through the text-generation provider (Phase 6) and
+  /// falls back to canned when the provider is unavailable per
+  /// /capabilities.
+  intelligenceMode  String   @default("canned") @map("intelligence_mode") @db.VarChar(20)
+  /// Static reply lines used by the canned dialog path. Cycled
+  /// in order when the player says hello.
+  dialogLines       String[] @map("dialog_lines")
+  /// Topics the NPC is willing to talk about, used as keywords by
+  /// the dialog matcher.
+  interests         String[]
+  /// AI-generated NPC art filename when present.
+  imageName         String?  @map("image_name") @db.VarChar(255)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  room MudRoom? @relation(fields: [roomId], references: [id])
+
+  @@index([roomId])
+  @@map("npc")
+  @@schema("mud")
+}

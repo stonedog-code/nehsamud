@@ -8,61 +8,94 @@ The product spec is [`docs/prd/PRD-0001-nehsamud.md`](docs/prd/PRD-0001-nehsamud
 Read it before changing behaviour — several things that look like gaps are
 recorded non-goals.
 
-## The three modes
+## Layout
 
-One engine, three builds, distinguished by what the **server** allows:
-
-| Mode | Monsters | Combat | Player combat | Looting |
-|---|---|---|---|---|
-| **Exploration** | no | no | no | no |
-| **PVE** | yes | yes | no | no |
-| **PVP** | yes | yes | yes | yes |
-
-Exploration is the build served to older adults. Its promise is that nothing
-in the world can hurt you, so the absence of combat is a property of the
-server, never of the interface — a deployment must be *incapable* of combat,
-not merely styled without it.
-
-Modes are selected by `NEHSAMUD_MODES`, a comma-separated list read on the
-server:
-
-```bash
-NEHSAMUD_MODES=exploration npm start   # the senior-safe deployment
-NEHSAMUD_MODES=pvp npm start           # a PVP host
-npm run dev                            # unset → all three, for development
+```
+packages/engine      the game engine — world, commands, combat, transport
+packages/engine-db   Prisma schema + client for the `mud` Postgres schema
+apps/web             the Next.js app: plays every mode, and is the surface
+                     the unit / integration / e2e tiers drive
+docs/prd             the product spec
 ```
 
-Unset means all three, which is why the dev site can drive every mode from one
-server. A production host always names exactly what it serves. An unrecognised
-entry is dropped rather than throwing — a typo should narrow what is served,
-never widen it.
+One npm workspace. The engine is the product; the app is how you play and
+test it. HopperGuard consumes `@nehsamud/engine` as a submodule and pins the
+mode to Exploration.
 
-## Status
+## The three modes
 
-This repository currently holds the **PRD and the app**. The engine still
-lives in `ElderLink-Solutions/hopper-mud` and moves here in phase 2 of the
-rollout plan; until then the play surface runs against a small in-browser
-preview world (`src/lib/preview-world.ts`) so the shell and its tests are real
-before the engine arrives.
+One engine, three products, distinguished by what the **server** allows:
 
-The preview world is not the game. It moves you between six rooms, honours all
-ten directions, and refuses combat in Exploration. It has no persistence, no
-monsters, and no other players.
+| Mode | Monsters | Combat | Player combat | Looting | Scripting |
+|---|---|---|---|---|---|
+| **Exploration** | no | no | no | no | no |
+| **PVE** | yes | yes | no | no | yes |
+| **PVP** | yes | yes | yes | yes | yes |
+
+Exploration is the build HopperGuard serves. Its promise is that nothing in
+the world can hurt you, so the absence of combat is a property of the server,
+never of the interface — a deployment must be *incapable* of combat, not
+merely styled without it. Two independent guards enforce that, and both are
+required:
+
+- `WorldState.spawnMonster` throws in a world without monsters, so a call
+  site that forgets to check fails loudly rather than quietly placing a
+  monster in front of someone who was told there were none.
+- The dispatcher builds its handler table from the mode, so the combat
+  handler is unreachable and no dispatch span is opened for a refused verb.
+
+**The capability table lives in the engine and nowhere else.** The app
+re-exports it from `@nehsamud/engine/modes` rather than keeping a copy — a
+second copy is a copy that can disagree, and the one that disagrees silently
+is the UI.
+
+Two environment variables, deliberately distinct:
+
+| Variable | Read by | Meaning |
+|---|---|---|
+| `MUD_GAME_MODE` | the engine | the **one** mode this engine process runs. Unset → `exploration`. An unrecognised value fails the boot. |
+| `NEHSAMUD_MODES` | the app | which modes this front end offers, comma-separated. Unset → all three (the dev site). |
 
 ## Running it
 
+The app alone, against the in-browser preview world — no database needed:
+
 ```bash
 npm install
-npm run dev          # http://localhost:3000
+npm run dev            # http://localhost:3000
 ```
+
+The real thing, engine and app together in one mode:
+
+```bash
+export MUD_DATABASE_URL='postgresql://…'
+npm run dev:all                 # exploration
+npm run dev:all -- pve
+npm run dev:all -- pvp
+```
+
+`dev:all` pins its own ports (`NEHSAMUD_WEB_PORT`, default 3000) rather than
+inheriting `PORT`, and takes both processes down if either dies.
+
+### Database
+
+The engine needs Postgres with the `mud` schema:
+
+```bash
+MUD_DATABASE_URL='postgresql://…' npm run prisma:migrate:deploy
+MUD_DATABASE_URL='postgresql://…' npm run seed
+```
+
+Migrations create an empty schema; **the seed is what puts rooms in it**, and
+without it the engine exits at boot saying the spawn room is missing.
 
 ## Tests
 
 Three tiers, all required:
 
 ```bash
-npm run test:unit    # jest — pure logic: modes, catalog, world
-npm run test:e2e     # playwright — the running app, per mode
+npm run test:unit    # jest, every workspace
+npm run test:e2e     # playwright against the running app
 npm run typecheck
 npm run build
 ```
@@ -70,15 +103,15 @@ npm run build
 The e2e tier is where the accessibility and interaction claims are checked;
 jsdom has no layout engine and would agree with almost anything.
 
-## Layout
+## Status
 
-```
-docs/prd/          the product spec
-src/app/           routes — mode picker, creation, play
-src/components/    CharacterCreation, Terminal
-src/lib/           modes, catalog, preview world (all unit-tested)
-e2e/               Playwright specs
-```
+The engine moved here from `ElderLink-Solutions/hopper-mud` and this is now
+its only home. The app still plays against a local preview world
+(`apps/web/src/lib/preview-world.ts`) rather than the live engine — that
+wiring is the next step. The preview world is not the game: six rooms, no
+persistence, no monsters, no other players, and the UI says so on the page.
+It does honour all ten directions, including the four diagonals the engine's
+parser cannot yet handle.
 
 ## Accessibility
 

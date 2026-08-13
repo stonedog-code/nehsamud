@@ -2,11 +2,16 @@ node_modules/
 .next/
 out/
 dist/
+build/
 coverage/
 test-results/
 playwright-report/
 next-env.d.ts
 *.tsbuildinfo
+
+# Prisma client is generated at build time from prisma/schema.prisma.
+packages/engine-db/generated/
+
 .env
 .env.local
 .DS_Store
