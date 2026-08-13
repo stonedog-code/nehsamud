@@ -53,6 +53,39 @@ export interface SessionState {
    * this; the next command (typically `look`) re-spawns them at
    * the town square. */
   defeated: boolean;
+  /**
+   * True while the player is resting.
+   *
+   * Set by `rest` and cleared by anything that breaks it — moving, being
+   * attacked, attacking. Held here rather than inferred from "HP below max"
+   * because those are different states: a player at full HP can still be
+   * sitting down, and a player who has just been ambushed is not resting no
+   * matter what their HP says.
+   */
+  resting: boolean;
+  /**
+   * Character sheet, loaded once at session open.
+   *
+   * `statistics` is a read-only view of values that only change on level-up
+   * or equipment change, so re-reading the row on every invocation would be a
+   * query for data the session already has. Undefined only for sessions that
+   * never loaded a player row (the in-memory tests, and the window before
+   * `create <name>` completes).
+   */
+  sheet?: CharacterSheet;
+}
+
+/** The unchanging-per-session half of a character, shown by `statistics`. */
+export interface CharacterSheet {
+  raceName: string;
+  className: string;
+  strength: number;
+  intelligence: number;
+  wisdom: number;
+  charisma: number;
+  constitution: number;
+  dexterity: number;
+  luck: number;
 }
 
 /**
@@ -82,6 +115,7 @@ export class SessionRegistry {
       level: 1,
       inventory: [],
       defeated: false,
+      resting: false,
     };
     this.bySocket.set(socket, state);
     this.byUser.set(userId, state);

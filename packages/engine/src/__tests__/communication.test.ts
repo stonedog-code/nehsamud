@@ -284,6 +284,7 @@ describe("without a session registry", () => {
       level: 1,
       inventory: [],
       defeated: false,
+    resting: false,
     };
     const res = (
       await dispatch({

@@ -57,6 +57,8 @@ export const attackHandler: CommandHandler = ({
   if (!target) {
     return reply("Attack what?");
   }
+  // Swinging at something ends the rest, whether or not the swing lands.
+  session.resting = false;
   const monster = world.findMonsterInRoom(target, session.currentRoomId);
   if (!monster) {
     return reply(`There's no "${target}" here to attack.`);

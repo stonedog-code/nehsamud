@@ -81,6 +81,7 @@ function newSession(roomId: string): SessionState {
     level: 1,
     inventory: [],
     defeated: false,
+    resting: false,
   };
 }
 

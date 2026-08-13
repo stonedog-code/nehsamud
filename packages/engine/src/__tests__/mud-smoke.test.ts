@@ -132,6 +132,15 @@ interface FakePlayerRow {
   maxHp: number;
   experience: number;
   level: number;
+  strength: number;
+  intelligence: number;
+  wisdom: number;
+  charisma: number;
+  constitution: number;
+  dexterity: number;
+  luck: number;
+  race: { name: string };
+  class: { name: string };
 }
 
 interface FakePrisma {
@@ -163,6 +172,18 @@ function fakePrisma(): FakePrisma {
         maxHp: args.data.maxHp as number,
         experience: args.data.experience as number,
         level: 1,
+      // The relations and attribute columns `loadPlayer` unpacks. Without
+      // them the mapper throws a TypeError from inside persistence and the
+      // socket simply never answers, which is why this fake carries them.
+      strength: 10,
+      intelligence: 10,
+      wisdom: 10,
+      charisma: 10,
+      constitution: 10,
+      dexterity: 10,
+      luck: 10,
+      race: { name: "Human" },
+      class: { name: "Fighter" },
       };
       rows.set(row.userId, row);
       return row;

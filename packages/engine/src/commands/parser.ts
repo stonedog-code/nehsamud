@@ -93,6 +93,13 @@ const VERB_ALIASES: Record<string, string> = {
   // `tell` is the common synonym for whisper. The `'` say-shortcut is a
   // prefix rather than a token, so it is handled in parseCommand itself.
   tell: "whisper",
+  // `st` is deliberately NOT an alias: it is ambiguous between `statistics`
+  // and a future `stand`, and a misfired status screen is harmless where a
+  // misfired stand is not.
+  stat: "statistics",
+  stats: "statistics",
+  exp: "experience",
+  xp: "experience",
   q: "quit",
   "?": "help",
   h: "help",
