@@ -22,9 +22,17 @@ export interface SessionState {
    * decrements it; respawn restores it. */
   currentHp: number;
   maxHp: number;
-  /** Accumulated experience from defeated monsters. Not persisted
-   * to the DB until Phase 7. */
+  /** Total accumulated experience. Loaded from `mud.player` at session
+   * open and written back when it changes, so it survives a reconnect. */
   experience: number;
+  /**
+   * Current level.
+   *
+   * Always `levelForXp(experience)` — kept on the session so a status line
+   * or a level-up announcement does not have to recompute it, never as an
+   * independent counter. If the two ever disagree, the experience is right.
+   */
+  level: number;
   /** True while the player has 0 HP. The combat resolver flips
    * this; the next command (typically `look`) re-spawns them at
    * the town square. */
@@ -55,6 +63,7 @@ export class SessionRegistry {
       currentHp: DEFAULT_MAX_HP,
       maxHp: DEFAULT_MAX_HP,
       experience: 0,
+      level: 1,
       defeated: false,
     };
     this.bySocket.set(socket, state);
