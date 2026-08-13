@@ -32,6 +32,7 @@ function buildWorld(): WorldState {
     description: "Warm fire.",
     exits: {},
     environment: "townsmee",
+    area: "townsmee",
     imageName: null,
   };
   const cannedNpc: CachedNpc = {

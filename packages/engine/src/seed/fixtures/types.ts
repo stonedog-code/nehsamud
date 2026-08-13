@@ -42,7 +42,15 @@ export interface RoomFixture {
   enumKey: string;
   name: string;
   description: string;
+  /**
+   * Per-room art / atmosphere hint. Distinct from `area`: two rooms in one
+   * area can look nothing alike, and this drives room-art generation.
+   * `environment` used to be the ONLY grouping, doing this job and the
+   * region's at once — which worked while there was exactly one region.
+   */
   environment: string | null;
+  /** `AreaFixture.key` this room belongs to. */
+  area: string;
   /** Exits map: direction → roomEnumKey. Resolved to UUIDs at seed
    * time once every room row exists. */
   exits: Record<string, string>;

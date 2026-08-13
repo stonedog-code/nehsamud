@@ -29,6 +29,7 @@ function buildWorld(): WorldState {
     description: "Cobbles + fountain.",
     exits: { south: "room-lower" },
     environment: "townsmee",
+    area: "townsmee",
     imageName: null,
   };
   const lower: CachedRoom = {
@@ -38,6 +39,7 @@ function buildWorld(): WorldState {
     description: "Run-down district.",
     exits: { north: "room-square" },
     environment: "townsmee",
+    area: "townsmee",
     imageName: null,
   };
   const goblin: CachedMonster = {

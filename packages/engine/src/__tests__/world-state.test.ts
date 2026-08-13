@@ -11,6 +11,7 @@ describe("WorldState hydration + lookup", () => {
         description: "desc",
         exits: {},
         environment: null,
+        area: "townsmee",
         imageName: null,
       },
     ]);
@@ -30,6 +31,7 @@ describe("WorldState hydration + lookup", () => {
           description: "",
           exits: {},
           environment: null,
+          area: "townsmee",
           imageName: null,
         },
       ],
@@ -91,6 +93,7 @@ describe("WorldState hydration + lookup", () => {
           description: "",
           exits: {},
           environment: null,
+          area: "townsmee",
           imageName: null,
         },
         {
@@ -100,6 +103,7 @@ describe("WorldState hydration + lookup", () => {
           description: "",
           exits: {},
           environment: null,
+          area: "townsmee",
           imageName: null,
         },
       ],

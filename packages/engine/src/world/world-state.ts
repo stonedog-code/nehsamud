@@ -28,6 +28,8 @@ import {
 } from "../game-mode.js";
 
 export interface CachedRoom {
+  /** Region key — see AreaFixture. Distinct from `environment`. */
+  area: string;
   id: string;
   enumKey: string;
   name: string;
@@ -162,6 +164,7 @@ export class WorldState {
         description: true,
         exits: true,
         environment: true,
+        area: true,
         imageName: true,
       },
     });
@@ -182,6 +185,7 @@ export class WorldState {
         description: r.description,
         exits,
         environment: r.environment,
+        area: r.area,
         imageName: r.imageName,
       };
       this.rooms.set(r.id, cached);

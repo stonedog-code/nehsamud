@@ -25,6 +25,7 @@ const SQUARE: CachedRoom = {
   description: "A modest square.",
   exits: { north: "room-inn" },
   environment: "townsmee",
+  area: "townsmee",
   imageName: null,
 };
 const INN: CachedRoom = {
@@ -34,6 +35,7 @@ const INN: CachedRoom = {
   description: "Warm.",
   exits: { south: "room-square" },
   environment: "townsmee",
+  area: "townsmee",
   imageName: null,
 };
 

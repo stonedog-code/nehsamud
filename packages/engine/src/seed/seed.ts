@@ -112,12 +112,14 @@ async function seedRooms(prisma: PrismaClient): Promise<number> {
         name: r.name,
         description: r.description,
         environment: r.environment,
+        area: r.area,
         exits: {},
       },
       update: {
         name: r.name,
         description: r.description,
         environment: r.environment,
+        area: r.area,
       },
     });
   }
