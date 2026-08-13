@@ -1,0 +1,353 @@
+/*
+ * Terminal-first styling.
+ *
+ * The Exploration build serves older adults, so its accessibility floor
+ * applies to all three modes (PRD-0001 §6): high contrast, generous type,
+ * 48px minimum targets, and nothing that depends on colour alone.
+ */
+
+:root {
+  --bg: #0e1116;
+  --bg-raised: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-dim: #9aa7b4;
+  --accent: #4ea7fc;
+  --accent-contrast: #04121f;
+  --danger: #ff7b72;
+  --ok: #56d364;
+
+  --font-body: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+
+  --tap-min: 48px;
+  --radius: 8px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --bg-raised: #f4f6f8;
+    --border: #c3ccd6;
+    --text: #12181f;
+    --text-dim: #4a5764;
+    --accent: #0b5fbd;
+    --accent-contrast: #ffffff;
+    --danger: #b3271f;
+    --ok: #1a7f37;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* Visible focus everywhere. Never removed — it is the only affordance a
+   keyboard-only player has for knowing where they are. */
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+}
+
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+  z-index: 10;
+  padding: 0.75rem 1rem;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-radius: var(--radius);
+}
+
+.page {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+.page-header h1 {
+  font-size: clamp(1.9rem, 4vw, 2.6rem);
+  margin: 0 0 0.35rem;
+  letter-spacing: -0.02em;
+}
+
+.page-header p {
+  color: var(--text-dim);
+  margin: 0 0 2rem;
+  max-width: 46rem;
+}
+
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr));
+  gap: 1.25rem;
+}
+
+.mode-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.mode-card h2 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+
+.mode-card .tagline {
+  color: var(--text);
+  font-weight: 600;
+  margin: 0;
+}
+
+.mode-card .description {
+  color: var(--text-dim);
+  margin: 0;
+  flex: 1;
+}
+
+.capability-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* Each capability states its own on/off in words as well as its glyph —
+   never colour or icon alone. */
+.capability {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.875rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+}
+
+.capability[data-on="true"] {
+  color: var(--text);
+  border-color: var(--ok);
+}
+
+.button,
+button.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap-min);
+  min-width: var(--tap-min);
+  padding: 0.75rem 1.35rem;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.button--secondary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.button[aria-disabled="true"],
+button.button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  margin: 0 0 1.5rem;
+}
+
+legend {
+  font-weight: 700;
+  padding: 0 0.5rem;
+}
+
+.option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+  gap: 0.75rem;
+}
+
+.option {
+  display: block;
+  padding: 1rem;
+  min-height: var(--tap-min);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  background: var(--bg-raised);
+}
+
+.option:has(input:checked) {
+  border-color: var(--accent);
+}
+
+.option input {
+  margin-right: 0.5rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--accent);
+}
+
+.option .option-name {
+  font-weight: 700;
+}
+
+.option .option-detail {
+  display: block;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  margin-top: 0.35rem;
+}
+
+label.field {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+input[type="text"] {
+  width: 100%;
+  max-width: 24rem;
+  min-height: var(--tap-min);
+  padding: 0.6rem 0.85rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.field-error {
+  color: var(--danger);
+  font-weight: 600;
+  margin: 0.5rem 0 0;
+}
+
+.stat-preview {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  padding: 1rem 1.25rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 1.5rem;
+}
+
+.stat-preview dt {
+  color: var(--text-dim);
+  font-size: 0.875rem;
+}
+
+.stat-preview dd {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal {
+  background: #05080c;
+  color: #d6e2ef;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  line-height: 1.7;
+  min-height: 22rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.terminal .room-name {
+  color: #7ee787;
+  font-weight: 700;
+}
+
+.terminal .echo {
+  color: #79c0ff;
+}
+
+.terminal .system {
+  color: #d29922;
+}
+
+.command-row {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+.command-row input[type="text"] {
+  flex: 1;
+  min-width: 12rem;
+  max-width: none;
+  font-family: var(--font-mono);
+}
+
+.notice {
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  margin-bottom: 1.5rem;
+}
+
+.notice h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+}
+
+.notice p {
+  margin: 0;
+  color: var(--text-dim);
+}
