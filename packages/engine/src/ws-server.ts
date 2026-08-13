@@ -16,7 +16,8 @@
  *   { "type": "AUTH",            "token": "<jwt>"   }   // from client
  *   { "type": "CLIENT_MESSAGE",  "message": "..."  }   // from client
  *   { "type": "SERVER_MESSAGE",  "message": "..."  }   // from server
- *   { "type": "AUTH_OK",         "userId": "..."   }   // from server
+ *   { "type": "AUTH_OK",         "userId": "...",
+ *     "mode": "exploration",     "capabilities": {…} }  // from server
  *   { "type": "AUTH_FAILED",     "error":   "..."  }   // from server
  *
  * Wire compatibility is the goal — the apps/web `MudClient` already
@@ -34,6 +35,12 @@ import type { PrismaClient } from "@nehsamud/engine-db";
 
 import type { AiServices } from "./ai/factory.js";
 import { verifyHopperToken } from "./auth.js";
+import {
+  DEFAULT_GAME_MODE,
+  capabilitiesFor,
+  type GameMode,
+  type ModeCapabilities,
+} from "./game-mode.js";
 import { dispatch } from "./commands/dispatch.js";
 import { parseCommand } from "./commands/parser.js";
 import {
@@ -65,6 +72,24 @@ export interface ServerMessageFrame {
 export interface AuthOkFrame {
   type: "AUTH_OK";
   userId: string;
+  /**
+   * What this world permits, and the mode it is running.
+   *
+   * Sent here rather than shared with clients as a compile-time constant.
+   * A shared constant can only be right if both sides were built from the
+   * same version; this is answered by the process actually serving the
+   * connection, so a client cannot render an affordance the server will
+   * refuse even when the two have drifted.
+   *
+   * It also keeps the engine out of browser bundles entirely — a UI needs
+   * these five booleans, not a package that carries express, Prisma and an
+   * OpenTelemetry SDK behind it.
+   *
+   * Additive to the frame, so an older client that ignores the field keeps
+   * working.
+   */
+  mode: GameMode;
+  capabilities: ModeCapabilities;
 }
 
 export interface AuthFailedFrame {
@@ -221,7 +246,17 @@ export class MudWsServer {
   }
 
   private onAuthenticated(socket: WebSocket, userId: string): void {
-    send(socket, { type: "AUTH_OK", userId });
+    // Falls back to the safe mode when there is no world — the Phase 1
+    // transport-only tests construct the server without one, and a frame
+    // that claimed combat was available in that state would be wrong in the
+    // dangerous direction.
+    const mode: GameMode = this.world?.mode ?? DEFAULT_GAME_MODE;
+    send(socket, {
+      type: "AUTH_OK",
+      userId,
+      mode,
+      capabilities: capabilitiesFor(mode),
+    });
     if (!this.world) {
       // Transport-only mode (Phase 1 tests). No world means no
       // session, so subsequent CLIENT_MESSAGE frames bounce off

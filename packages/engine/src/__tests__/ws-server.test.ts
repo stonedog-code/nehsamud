@@ -98,9 +98,26 @@ describe("MudWsServer — AUTH-first gate", () => {
     const reply = JSON.parse(await nextFrame(client)) as {
       type: string;
       userId: string;
+      mode: string;
+      capabilities: Record<string, boolean>;
     };
     expect(reply.type).toBe("AUTH_OK");
     expect(reply.userId).toBe("u-42");
+
+    // The frame carries what this world permits, so a client never has to
+    // infer it from a shared build-time constant. This server has no world
+    // loaded, which must report as the SAFE mode rather than as unknown —
+    // a client that read a missing field as "combat allowed" would offer an
+    // affordance the server refuses.
+    expect(reply.mode).toBe("exploration");
+    expect(reply.capabilities).toEqual({
+      monsters: false,
+      combat: false,
+      playerVersusPlayer: false,
+      looting: false,
+      scripting: false,
+    });
+
     expect(booted.server.summary().authenticated).toBe(1);
     client.close();
   });
