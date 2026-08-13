@@ -105,4 +105,39 @@ export class SessionRegistry {
   size(): number {
     return this.byUser.size;
   }
+
+  /**
+   * Every live session.
+   *
+   * Needed because communication verbs address OTHER players — `say` reaches a
+   * room, `who` reaches everyone — and until now nothing could see past the
+   * caller's own session. A WeakMap keyed by socket cannot be enumerated, so
+   * the by-user map is the one that answers this.
+   */
+  all(): SessionState[] {
+    return [...this.byUser.values()];
+  }
+
+  /** Live sessions in a room, excluding one userId when given. */
+  inRoom(roomId: string, excludeUserId?: string): SessionState[] {
+    return this.all().filter(
+      (s) => s.currentRoomId === roomId && s.userId !== excludeUserId,
+    );
+  }
+
+  /**
+   * Find a session by character name, case-insensitively.
+   *
+   * Falls back to userId so a session that has not set a name yet is still
+   * addressable — otherwise a player mid-creation is invisible to `who` and
+   * unreachable by `whisper`, which reads as them not existing.
+   */
+  findByCharacterName(name: string): SessionState | undefined {
+    const q = name.trim().toLowerCase();
+    if (!q) return undefined;
+    return this.all().find(
+      (s) =>
+        s.characterName?.toLowerCase() === q || s.userId.toLowerCase() === q,
+    );
+  }
 }

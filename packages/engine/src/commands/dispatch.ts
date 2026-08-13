@@ -22,6 +22,12 @@ import { inventoryHandler } from "./handlers/inventory.js";
 import { lookHandler } from "./handlers/look.js";
 import { moveHandler } from "./handlers/move.js";
 import { quitHandler } from "./handlers/quit.js";
+import {
+  sayHandler,
+  whisperHandler,
+  whoHandler,
+  yellHandler,
+} from "./handlers/say.js";
 import { talkHandler } from "./handlers/talk.js";
 import type {
   CommandContext,
@@ -38,6 +44,10 @@ const BASE_HANDLERS: Record<string, CommandHandler> = {
   inventory: inventoryHandler,
   get: getHandler,
   drop: dropHandler,
+  say: sayHandler,
+  yell: yellHandler,
+  whisper: whisperHandler,
+  who: whoHandler,
   help: helpHandler,
   quit: quitHandler,
 };

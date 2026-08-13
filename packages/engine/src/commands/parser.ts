@@ -90,6 +90,9 @@ const VERB_ALIASES: Record<string, string> = {
   nw: "northwest",
   u: "up",
   d: "down",
+  // `tell` is the common synonym for whisper. The `'` say-shortcut is a
+  // prefix rather than a token, so it is handled in parseCommand itself.
+  tell: "whisper",
   q: "quit",
   "?": "help",
   h: "help",
@@ -100,6 +103,15 @@ export function parseCommand(raw: string): ParsedCommand {
   if (trimmed === "") {
     return { verb: "", args: [], rest: "" };
   }
+  // The classic MUD say-shortcut binds tight: `'hello there` with no space.
+  // It cannot be an alias, because aliases map whole tokens and this one is a
+  // one-character PREFIX — `'hello` tokenizes as the verb `'hello`. Handled
+  // here so `say`'s own parsing stays ordinary.
+  if (trimmed.startsWith("'")) {
+    const said = trimmed.slice(1).trim();
+    return { verb: "say", args: said === "" ? [] : said.split(/\s+/), rest: said };
+  }
+
   const firstSpace = trimmed.indexOf(" ");
   const rawVerb =
     (firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace)).toLowerCase();
