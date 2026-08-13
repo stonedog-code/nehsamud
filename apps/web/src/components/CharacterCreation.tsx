@@ -15,10 +15,17 @@ import type { GameMode } from "@/lib/modes";
 /**
  * Race + class + name, with a live stat preview.
  *
- * The preview exists because PRD-0001 R9 requires the choice to matter. Until
- * the engine applies these modifiers the numbers describe intent rather than
- * behaviour, which the caption says plainly — a preview that quietly disagrees
- * with the server is worse than no preview.
+ * The preview exists because PRD-0001 R9 requires the choice to matter, and
+ * the numbers now describe BEHAVIOUR: `deriveStats` delegates to the
+ * engine's own `deriveCharacter`, so what is shown here is by construction
+ * what the server will write into the row (NEH-621).
+ *
+ * This docblock previously said the numbers "describe intent rather than
+ * behaviour, which the caption says plainly". Two things were wrong with
+ * that: the engine really did ignore the modifiers, and there was no such
+ * caption anywhere in this component — so the disclaimer a reader was
+ * promised did not exist. Copy that describes a temporary state has to be
+ * removed by whatever ends that state, or it quietly becomes untrue.
  */
 export function CharacterCreation({ mode }: { mode: GameMode }) {
   const router = useRouter();
@@ -96,11 +103,11 @@ export function CharacterCreation({ mode }: { mode: GameMode }) {
         <dl className="stat-preview" aria-live="polite">
           <div>
             <dt>Health</dt>
-            <dd>{stats.hp}</dd>
+            <dd data-testid="preview-hp">{stats.hp}</dd>
           </div>
           <div>
             <dt>Damage</dt>
-            <dd>{stats.damage}</dd>
+            <dd data-testid="preview-damage">{stats.damage}</dd>
           </div>
         </dl>
       )}

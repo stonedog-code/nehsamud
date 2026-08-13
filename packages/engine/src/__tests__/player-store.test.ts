@@ -4,6 +4,7 @@
  * suite exercises the real schema.
  */
 
+import { deriveCharacter } from "../character.js";
 import {
   createPlayer,
   loadOrCreatePlayer,
@@ -34,6 +35,26 @@ interface MockPlayer {
   race: { name: string };
   class: { name: string };
 }
+
+/** Modifier sets the fake race/class rows carry, mirroring the real seed. */
+const DWARF_MODS = {
+  strengthMod: 2,
+  intelligenceMod: 0,
+  wisdomMod: 1,
+  charismaMod: -1,
+  constitutionMod: 2,
+  dexterityMod: 0,
+  luckMod: 0,
+};
+const MAGE_MODS = {
+  strengthMod: -1,
+  intelligenceMod: 3,
+  wisdomMod: 2,
+  charismaMod: 0,
+  constitutionMod: -1,
+  dexterityMod: 0,
+  luckMod: 0,
+};
 
 /** The attribute half of a row, at the schema's own defaults. */
 const DEFAULT_ATTRIBUTES = {
@@ -77,7 +98,7 @@ function makePrisma(options: {
       // came first alphabetically.
       findUnique: jest.fn(async (args: { where: { slug: string } }) =>
         options.raceId && args.where.slug === "dwarf"
-          ? { id: options.raceId, playable: true }
+          ? { id: options.raceId, playable: true, ...DWARF_MODS }
           : null,
       ),
       findMany: jest.fn(async () =>
@@ -87,7 +108,7 @@ function makePrisma(options: {
     mudClass: {
       findUnique: jest.fn(async (args: { where: { slug: string } }) =>
         options.classId && args.where.slug === "mage"
-          ? { id: options.classId, playable: true }
+          ? { id: options.classId, playable: true, ...MAGE_MODS }
           : null,
       ),
       findMany: jest.fn(async () =>
@@ -229,6 +250,34 @@ describe("createPlayer", () => {
       ),
     ).rejects.toThrow(/not a playable class/);
     expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
+  });
+
+  it("writes attributes and hp derived from the chosen race and class", async () => {
+    // The seven attribute columns were never written at all, so every
+    // character took the schema default of 10 across the board — which is
+    // why `statistics` showed identical sheets for every pairing.
+    const prisma = makePrisma({ raceId: "race-1", classId: "class-1" });
+    await createPlayer(
+      prisma as unknown as Parameters<typeof createPlayer>[0],
+      "u-1",
+      "Aelric",
+      "room-spawn",
+      { raceSlug: "dwarf", classSlug: "mage" },
+    );
+    const data = (
+      prisma.mudPlayer.create.mock.calls[0]?.[0] as {
+        data: Record<string, unknown>;
+      }
+    ).data;
+
+    const expected = deriveCharacter(DWARF_MODS, MAGE_MODS);
+    expect(data.strength).toBe(expected.attributes.strength);
+    expect(data.constitution).toBe(expected.attributes.constitution);
+    expect(data.maxHp).toBe(expected.maxHp);
+    // A fresh character starts at full health, whatever that works out to.
+    expect(data.currentHp).toBe(data.maxHp);
+    // Not the schema default that everyone used to get.
+    expect(data.strength).not.toBe(10);
   });
 
   it("writes the chosen race and class ids, not a default", async () => {

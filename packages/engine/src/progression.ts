@@ -15,6 +15,9 @@
  * self-correcting on the next load.
  */
 
+import { BASE_ATTRIBUTE, maxHpForLevel } from "./character.js";
+export { HP_PER_LEVEL } from "./character.js";
+
 /** Nobody advances past this. The brief's target. */
 export const MAX_LEVEL = 100;
 
@@ -105,18 +108,28 @@ export interface LevelGains {
 }
 
 /**
- * Per-level gains.
+ * Per-level gains, for a given constitution.
  *
- * Flat for now, and deliberately not derived from race or class: those
- * modifiers are inert engine-wide (NEH-621), and inventing a formula here
- * would create a second place that has to agree with whatever that issue
- * eventually decides. One flat number is easy to replace; a formula spread
- * across two modules is not.
+ * This was a flat 5, with a comment saying race and class modifiers were
+ * inert engine-wide (NEH-621) and that inventing a formula here would create
+ * a second place to keep in agreement. That is exactly why the gain is now a
+ * DIFFERENCE of `maxHpForLevel` rather than a formula of its own: there is
+ * still only one place that knows how constitution becomes health, and
+ * "created at level 5" and "levelled up to 5" cannot drift apart, because
+ * both resolve through the same function.
+ *
+ * Constitution defaults to the baseline so callers that genuinely do not
+ * have a character — older tests, tooling — still get the old flat number.
  */
-export const HP_PER_LEVEL = 5;
-
-export function gainsForLevel(_level: number): LevelGains {
-  return { maxHp: HP_PER_LEVEL };
+export function gainsForLevel(
+  level: number,
+  constitution: number = BASE_ATTRIBUTE,
+): LevelGains {
+  return {
+    maxHp:
+      maxHpForLevel(level, constitution) -
+      maxHpForLevel(level - 1, constitution),
+  };
 }
 
 export interface AwardResult {
@@ -147,6 +160,7 @@ export interface AwardResult {
 export function awardExperience(
   currentExperience: number,
   amount: number,
+  constitution: number = BASE_ATTRIBUTE,
 ): AwardResult {
   const safeCurrent = Number.isFinite(currentExperience)
     ? Math.max(0, currentExperience)
@@ -162,7 +176,7 @@ export function awardExperience(
 
   let maxHpGained = 0;
   for (let l = previousLevel + 1; l <= level; l += 1) {
-    maxHpGained += gainsForLevel(l).maxHp;
+    maxHpGained += gainsForLevel(l, constitution).maxHp;
   }
 
   return {

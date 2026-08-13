@@ -3,7 +3,8 @@
  * the current room.
  *
  * Resolution per command invocation:
- *   1. Player swings: monster takes `PLAYER_BASE_DAMAGE` damage
+ *   1. Player swings: monster takes damage derived from the player's
+ *      strength (see character.ts), their weapon, level and a spread
  *      (Phase 7 will add weapon + str-mod scaling once inventory
  *      and equipped-weapon tracking is wired).
  *   2. If the monster survives, it counter-attacks: player takes
@@ -26,6 +27,11 @@ import {
   type Combatant,
 } from "../../combat.js";
 import {
+  BASE_ATTRIBUTE,
+  BASE_PLAYER_DAMAGE,
+  baseDamageFor,
+} from "../../character.js";
+import {
   MAX_LEVEL,
   awardExperience,
   xpToNextLevel,
@@ -41,7 +47,14 @@ import { reply } from "../types.js";
  * answer — the resolver adds level scaling, the weapon, and a spread. Kept
  * exported because tests and balance work both want it named.
  */
-export const PLAYER_BASE_DAMAGE = 5;
+/**
+ * @deprecated Unarmed damage is derived from strength now — see
+ * `baseDamageFor` in character.ts. Kept as the *baseline* value (what a
+ * character of average strength swings for) because tests and fixtures
+ * reference it, and re-pointing it at the real constant is what stops the
+ * two drifting into disagreement.
+ */
+export const PLAYER_BASE_DAMAGE = BASE_PLAYER_DAMAGE;
 
 export const attackHandler: CommandHandler = ({
   world,
@@ -75,7 +88,9 @@ export const attackHandler: CommandHandler = ({
   const player: Combatant = {
     name: "you",
     level: session.level,
-    baseDamage: PLAYER_BASE_DAMAGE,
+    // Derived from strength, not a flat constant. This was
+    // `PLAYER_BASE_DAMAGE` for every player regardless of who they were.
+    baseDamage: baseDamageFor(session.sheet?.strength ?? BASE_ATTRIBUTE),
     // What the player has actually equipped. Until this line existed, `equip`
     // changed a flag and nothing else — the item system's whole point is that
     // a better sword hits harder, and a decorative equip is the kind of
@@ -100,7 +115,14 @@ export const attackHandler: CommandHandler = ({
     }),
   );
   if (swing.hit && remainingHp === 0) {
-    const award = awardExperience(session.experience, monster.experience);
+    const award = awardExperience(
+      session.experience,
+      monster.experience,
+      // Constitution scales the per-level HP gain, so a Dwarf Warrior pulls
+      // further ahead of a Halfling Mage with every level rather than
+      // keeping a fixed lead that is noise by level 100.
+      session.sheet?.constitution,
+    );
     session.experience = award.experience;
     session.level = award.level;
 
