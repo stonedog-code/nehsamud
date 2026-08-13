@@ -56,6 +56,7 @@ function sessionAt(roomId: string): SessionState {
     maxHp: 30,
     experience: 0,
     level: 1,
+    inventory: [],
     defeated: false,
   };
 }

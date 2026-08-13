@@ -90,6 +90,24 @@ export interface MonsterInstance {
   experience: number;
 }
 
+/** Catalog row for an item. Immutable reference data. */
+export interface CachedItem {
+  id: string;
+  name: string;
+  description: string;
+  /** Mirrors MudItemType. Weapons/armour interpret baseValue. */
+  type: number;
+  baseValue: number | null;
+  weight: number;
+}
+
+/** A stack of one item lying in a room. */
+export interface RoomItemStack {
+  itemId: string;
+  name: string;
+  quantity: number;
+}
+
 export class WorldState {
   /**
    * The mode this world runs in. Set once at construction and never
@@ -121,6 +139,10 @@ export class WorldState {
   /** Index of live instances per roomId for fast `look` rendering. */
   private monstersByRoomId = new Map<string, MonsterInstance[]>();
   private nextMonsterInstanceCounter = 0;
+  private items = new Map<string, CachedItem>();
+  /** Items lying on the floor, per room. Mutable: `get` and `drop` move
+   * stacks between here and a player's inventory. */
+  private roomItems = new Map<string, RoomItemStack[]>();
 
   async load(prisma: PrismaClient): Promise<void> {
     const rows = await prisma.mudRoom.findMany({
@@ -234,6 +256,35 @@ export class WorldState {
     this.monsterInstances.clear();
     this.monstersByRoomId.clear();
     this.nextMonsterInstanceCounter = 0;
+
+    const itemRows = await prisma.mudItem.findMany({
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        type: true,
+        baseValue: true,
+        weight: true,
+      },
+    });
+    this.items.clear();
+    for (const i of itemRows) this.items.set(i.id, i);
+
+    // Room contents DO persist, unlike monster spawns — an item a player
+    // dropped last week is still on that floor. So they are loaded rather
+    // than regenerated, and written back when they move.
+    const roomItemRows = await prisma.mudRoomItem.findMany({
+      select: { roomId: true, itemId: true, quantity: true },
+    });
+    this.roomItems.clear();
+    for (const ri of roomItemRows) {
+      // Skip rows whose item vanished from the catalog rather than throwing:
+      // a half-loaded world is worse than a world missing one object, and the
+      // boot should not die on stale data it can simply ignore.
+      if (this.items.has(ri.itemId)) {
+        this.addItemToRoom(ri.roomId, ri.itemId, ri.quantity);
+      }
+    }
   }
 
   /** Test seam — populate the cache without hitting the DB. */
@@ -241,6 +292,8 @@ export class WorldState {
     rooms: CachedRoom[],
     npcs: CachedNpc[] = [],
     monsters: CachedMonster[] = [],
+    items: CachedItem[] = [],
+    roomItems: Array<{ roomId: string; itemId: string; quantity: number }> = [],
   ): void {
     this.rooms.clear();
     this.roomsByEnumKey.clear();
@@ -252,6 +305,10 @@ export class WorldState {
     this.monsterInstances.clear();
     this.monstersByRoomId.clear();
     this.nextMonsterInstanceCounter = 0;
+    this.items.clear();
+    this.roomItems.clear();
+    for (const i of items) this.items.set(i.id, i);
+    for (const ri of roomItems) this.addItemToRoom(ri.roomId, ri.itemId, ri.quantity);
     for (const r of rooms) {
       this.rooms.set(r.id, r);
       this.roomsByEnumKey.set(r.enumKey, r);
@@ -308,6 +365,85 @@ export class WorldState {
 
   npcCount(): number {
     return this.npcs.size;
+  }
+
+
+  /* ─── Items ────────────────────────────────────────────────────
+   *
+   * Room contents are IN-MEMORY and authoritative for the running world, the
+   * same as monster instances. The database is where they are loaded from and
+   * written back to; it is not consulted per command, because two players in
+   * one room racing for one item must be resolved by a single owner and that
+   * owner is this process.
+   */
+
+  getItem(itemId: string): CachedItem | undefined {
+    return this.items.get(itemId);
+  }
+
+  itemCatalogCount(): number {
+    return this.items.size;
+  }
+
+  /** Stacks lying in a room. Empty array when none — never undefined, so
+   * callers do not each invent a fallback. */
+  getItemsInRoom(roomId: string): RoomItemStack[] {
+    return this.roomItems.get(roomId) ?? [];
+  }
+
+  /**
+   * Find an item in a room by name or a leading word of it, case-insensitively
+   * — `get rusty` should find "Rusty Dagger", because a player types what they
+   * see rather than an exact string.
+   */
+  findItemInRoom(query: string, roomId: string): RoomItemStack | undefined {
+    const q = query.trim().toLowerCase();
+    if (!q) return undefined;
+    const stacks = this.getItemsInRoom(roomId);
+    return (
+      stacks.find((s) => s.name.toLowerCase() === q) ??
+      stacks.find((s) => s.name.toLowerCase().startsWith(q)) ??
+      stacks.find((s) => s.name.toLowerCase().includes(q))
+    );
+  }
+
+  /** Put `quantity` of an item into a room, merging into an existing stack. */
+  addItemToRoom(roomId: string, itemId: string, quantity = 1): void {
+    if (quantity <= 0) return;
+    const item = this.items.get(itemId);
+    if (!item) {
+      throw new Error(`addItemToRoom: unknown itemId "${itemId}"`);
+    }
+    const stacks = this.roomItems.get(roomId) ?? [];
+    const existing = stacks.find((s) => s.itemId === itemId);
+    if (existing) {
+      existing.quantity += quantity;
+    } else {
+      stacks.push({ itemId, name: item.name, quantity });
+    }
+    this.roomItems.set(roomId, stacks);
+  }
+
+  /**
+   * Remove one of an item from a room. Returns the stack as it was BEFORE the
+   * removal, or undefined when there was none.
+   *
+   * Takes one at a time deliberately: `get coins` picking up an entire stack
+   * silently is the kind of thing a player notices only after it is gone.
+   * Empty stacks are dropped rather than left at zero, so `look` never
+   * advertises something that is not there.
+   */
+  takeItemFromRoom(roomId: string, itemId: string): RoomItemStack | undefined {
+    const stacks = this.roomItems.get(roomId);
+    if (!stacks) return undefined;
+    const index = stacks.findIndex((s) => s.itemId === itemId);
+    if (index === -1) return undefined;
+    const stack = stacks[index]!;
+    const before = { ...stack };
+    stack.quantity -= 1;
+    if (stack.quantity <= 0) stacks.splice(index, 1);
+    if (stacks.length === 0) this.roomItems.delete(roomId);
+    return before;
   }
 
   /* ─── Monster catalog + instance management ───────────────── */

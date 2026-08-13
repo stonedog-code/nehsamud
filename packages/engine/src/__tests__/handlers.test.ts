@@ -7,6 +7,7 @@
 import { dispatch } from "../commands/dispatch.js";
 import { parseCommand } from "../commands/parser.js";
 import type { CachedNpc, CachedRoom } from "../world/world-state.js";
+import type { SessionState } from "../world/session.js";
 import { WorldState } from "../world/world-state.js";
 
 function buildWorld(): WorldState {
@@ -46,7 +47,7 @@ function buildWorld(): WorldState {
   return w;
 }
 
-function sessionAt(roomId: string) {
+function sessionAt(roomId: string): SessionState {
   return {
     userId: "u-1",
     currentRoomId: roomId,
@@ -54,6 +55,7 @@ function sessionAt(roomId: string) {
     maxHp: 30,
     experience: 0,
     level: 1,
+    inventory: [],
     defeated: false,
   };
 }
@@ -227,7 +229,12 @@ describe("dispatch — unknown verb + empty input", () => {
     expect(result.response.lines.join(" ")).toMatch(/Safe travels/);
   });
 
-  it("inventory returns the empty-placeholder response", async () => {
+  it("inventory reports an empty bag when nothing is carried", async () => {
+    // This used to assert the string "empty" against a stub that answered
+    // "(empty — pickup/drop wires up in Phase 7)" unconditionally. Phase 7 had
+    // landed; the stub had not been revisited, so the command reported an
+    // empty bag to a player who was carrying things — and the test agreed
+    // with it.
     const world = buildWorld();
     const session = sessionAt("room-square");
     const lines = (await dispatch({
@@ -235,6 +242,23 @@ describe("dispatch — unknown verb + empty input", () => {
       session,
       command: parseCommand("inventory"),
     })).response.lines;
-    expect(lines.join(" ")).toContain("empty");
+    expect(lines.join(" ")).toContain("aren't carrying anything");
+  });
+
+  it("inventory lists what is actually carried", async () => {
+    const world = buildWorld();
+    const session = sessionAt("room-square");
+    session.inventory = [
+      { itemId: "i-1", name: "Rusty Dagger", quantity: 1 },
+      { itemId: "i-2", name: "Copper Coin", quantity: 7 },
+    ];
+    const text = (await dispatch({
+      world,
+      session,
+      command: parseCommand("inventory"),
+    })).response.lines.join("\n");
+    expect(text).toContain("Rusty Dagger");
+    expect(text).toContain("Copper Coin (x7)");
+    expect(text).toContain("8 items in total");
   });
 });

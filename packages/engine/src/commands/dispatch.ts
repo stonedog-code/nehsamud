@@ -15,6 +15,8 @@
 import { COMBAT_VERBS } from "../game-mode.js";
 import { withSpan } from "../telemetry/spans.js";
 import { attackHandler } from "./handlers/attack.js";
+import { dropHandler } from "./handlers/drop.js";
+import { getHandler } from "./handlers/get.js";
 import { helpHandler } from "./handlers/help.js";
 import { inventoryHandler } from "./handlers/inventory.js";
 import { lookHandler } from "./handlers/look.js";
@@ -34,6 +36,8 @@ const BASE_HANDLERS: Record<string, CommandHandler> = {
   move: moveHandler,
   talk: talkHandler,
   inventory: inventoryHandler,
+  get: getHandler,
+  drop: dropHandler,
   help: helpHandler,
   quit: quitHandler,
 };

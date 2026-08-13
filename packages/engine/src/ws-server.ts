@@ -47,6 +47,9 @@ import { parseCommand } from "./commands/parser.js";
 import {
   createPlayer,
   loadPlayer,
+  loadInventory,
+  saveInventory,
+  saveRoomItems,
   savePlayerState,
 } from "./persistence/player-store.js";
 import { RoomArtGenerator } from "./persistence/room-art-generator.js";
@@ -346,6 +349,18 @@ export class MudWsServer {
     // means a row whose level drifted — a lost write, a hand edit — corrects
     // itself on the next login instead of persisting the disagreement.
     session.level = levelForXp(session.experience);
+    // Carried items are loaded here rather than lazily on the first
+    // `inventory`, so `drop` works on the first command of a session too.
+    const playerId = this.playerIdBySocket.get(socket);
+    if (this.prisma && playerId) {
+      try {
+        session.inventory = await loadInventory(this.prisma, playerId);
+      } catch {
+        // An unreadable inventory must not block the login. The player sees
+        // an empty bag until the next successful load; losing the session
+        // entirely would be the worse failure.
+      }
+    }
     if (session.currentHp === 0) session.defeated = true;
 
     if (this.prisma) {
@@ -502,6 +517,18 @@ export class MudWsServer {
     if (!playerId) return;
     try {
       await savePlayerState(this.prisma, playerId, session);
+      await saveInventory(this.prisma, playerId, session.inventory);
+      // Only the room the player is standing in can have changed — `get` and
+      // `drop` are the only verbs that move floor contents, and both act
+      // here. Writing every room would be the obvious way to make this too
+      // slow to keep.
+      if (this.world) {
+        await saveRoomItems(
+          this.prisma,
+          session.currentRoomId,
+          this.world.getItemsInRoom(session.currentRoomId),
+        );
+      }
     } catch {
       // Swallowed: a Postgres hiccup shouldn't kill the player's
       // connection. The next save attempt will retry the full

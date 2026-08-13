@@ -27,7 +27,7 @@ import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@nehsamud/engine-db";
 
 import { levelForXp } from "../progression.js";
-import type { SessionState } from "../world/session.js";
+import type { InventoryEntry, SessionState } from "../world/session.js";
 import { DEFAULT_MAX_HP } from "../world/session.js";
 
 export interface PlayerRecord {
@@ -188,4 +188,79 @@ export async function savePlayerState(
       lastSeenAt: new Date(),
     },
   });
+}
+
+/* ─── Inventory ────────────────────────────────────────────────────
+ *
+ * Split from savePlayerState because these are different tables with
+ * different lifetimes: a player row is one UPDATE, an inventory is a set of
+ * rows that can grow and shrink. Folding them together would mean rewriting
+ * every inventory row on every movement command.
+ */
+
+/** Load a player's carried items. */
+export async function loadInventory(
+  prisma: PrismaClient,
+  playerId: string,
+): Promise<InventoryEntry[]> {
+  const rows = await prisma.mudInventory.findMany({
+    where: { playerId },
+    select: { itemId: true, quantity: true, item: { select: { name: true } } },
+  });
+  return rows.map((r) => ({
+    itemId: r.itemId,
+    name: r.item.name,
+    quantity: r.quantity,
+  }));
+}
+
+/**
+ * Replace a player's inventory rows with the session's view.
+ *
+ * Delete-then-insert inside one transaction rather than diffing. An inventory
+ * is a handful of rows, and a diff has to get three cases right (added,
+ * removed, quantity changed) where a replace has one. The transaction is what
+ * makes it safe: without it a crash between the delete and the insert loses
+ * everything the player was carrying.
+ */
+export async function saveInventory(
+  prisma: PrismaClient,
+  playerId: string,
+  inventory: InventoryEntry[],
+): Promise<void> {
+  await prisma.$transaction([
+    prisma.mudInventory.deleteMany({ where: { playerId } }),
+    ...inventory.map((entry) =>
+      prisma.mudInventory.create({
+        data: {
+          playerId,
+          itemId: entry.itemId,
+          quantity: entry.quantity,
+        },
+      }),
+    ),
+  ]);
+}
+
+/**
+ * Replace what is lying in one room.
+ *
+ * Room contents persist — an item dropped last week is still on that floor —
+ * so this runs whenever a `get` or `drop` changes them. Scoped to the single
+ * room the player is in, because rewriting every room's floor on every command
+ * would be the obvious way to make this too slow to keep.
+ */
+export async function saveRoomItems(
+  prisma: PrismaClient,
+  roomId: string,
+  stacks: Array<{ itemId: string; quantity: number }>,
+): Promise<void> {
+  await prisma.$transaction([
+    prisma.mudRoomItem.deleteMany({ where: { roomId } }),
+    ...stacks.map((s) =>
+      prisma.mudRoomItem.create({
+        data: { roomId, itemId: s.itemId, quantity: s.quantity },
+      }),
+    ),
+  ]);
 }

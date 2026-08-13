@@ -11,6 +11,7 @@ import {
   CLASSES,
   EFFECTS,
   ITEMS,
+  ITEM_PLACEMENTS,
   MONSTERS,
   NPCS,
   RACES,
@@ -36,6 +37,7 @@ function makeMockPrisma() {
     room: [] as UpsertCall[],
     roomUpdates: [] as UpdateCall[],
     item: [] as UpsertCall[],
+    roomItem: [] as Array<{ data: Record<string, unknown> }>,
     monster: [] as UpsertCall[],
     npc: [] as UpsertCall[],
   };
@@ -60,6 +62,9 @@ function makeMockPrisma() {
         upsert: jest.fn(async (call: UpsertCall) => {
           calls.room.push(call);
         }),
+        findUnique: jest.fn(async (call: { where: { enumKey: string } }) => ({
+          id: `room-${call.where.enumKey}`,
+        })),
         findMany: jest.fn(async () =>
           Array.from(roomIdByKey).map(([enumKey, id]) => ({ id, enumKey })),
         ),
@@ -70,6 +75,19 @@ function makeMockPrisma() {
       mudItem: {
         upsert: jest.fn(async (call: UpsertCall) => {
           calls.item.push(call);
+        }),
+        // Item placement joins rooms to items by their application keys.
+        findUnique: jest.fn(async (call: { where: { name: string } }) => ({
+          id: `item-${call.where.name.toLowerCase().replace(/\s+/g, "-")}`,
+        })),
+      },
+      // Room contents. findFirst returns null so a fresh world places its
+      // starting items; the idempotent-skip path is covered separately.
+      mudRoomItem: {
+        findFirst: jest.fn(async () => null),
+        create: jest.fn(async (call: { data: Record<string, unknown> }) => {
+          calls.roomItem.push(call);
+          return call.data;
         }),
       },
       mudMonster: {
@@ -98,6 +116,11 @@ describe("seedCatalog — orchestration", () => {
       classes: CLASSES.length,
       rooms: ROOMS.length,
       items: ITEMS.length,
+      // Every placement lands in a fresh world; the fake reports each room as
+      // empty. A re-run against a populated room places none — that skip is
+      // what stops the seed duplicating a sword or sweeping up something a
+      // player dropped.
+      placements: ITEM_PLACEMENTS.length,
       monsters: MONSTERS.length,
       npcs: NPCS.length,
     });

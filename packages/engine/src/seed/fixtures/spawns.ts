@@ -32,3 +32,36 @@ export const MONSTER_SPAWNS: MonsterSpawnFixture[] = [
   { roomEnumKey: "TOWNSMEE_TALENTROAD", monsterSlug: "bandit" },
   { roomEnumKey: "TOWNSMEE_GALLOWS", monsterSlug: "skeleton" },
 ];
+
+/**
+ * Item placements — what is lying on the floor in a fresh world.
+ *
+ * Unlike monster spawns these ARE persisted, into `mud.room_item`, because
+ * room contents outlive a process: an item a player dropped last week is
+ * still there. The seed is idempotent, so it places these only when the room
+ * is empty — re-running it must not quietly duplicate a sword, and must not
+ * sweep up something a player left.
+ *
+ * Deliberately sparse. A world where every room has loot teaches players not
+ * to read; a handful of placed objects makes `look` worth doing.
+ */
+export interface ItemPlacementFixture {
+  /** roomEnumKey the item lies in. */
+  roomEnumKey: string;
+  /** item.name from the item catalog — the application-layer key. */
+  itemName: string;
+  quantity?: number;
+}
+
+export const ITEM_PLACEMENTS: ItemPlacementFixture[] = [
+  // The smithy sells weapons; a stick by the door is the joke that teaches
+  // `get` without handing out anything worth having.
+  { roomEnumKey: "TOWNSMEE_BLACKSMITH", itemName: "Wooden Stick" },
+  { roomEnumKey: "TOWNSMEE_BLACKSMITH", itemName: "Dagger" },
+  // A market stall with something stackable, so `get` and `inventory` are
+  // exercised against a quantity > 1 in a real world rather than only in tests.
+  { roomEnumKey: "TOWNSMEE_MARKET", itemName: "Leather Helmet" },
+  // Somewhere quiet, so a player who explores past the town square finds
+  // something for it.
+  { roomEnumKey: "TOWNSMEE_INN_THIRD", itemName: "Quarterstaff" },
+];

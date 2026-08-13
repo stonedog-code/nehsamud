@@ -12,6 +12,13 @@
  * connection's lifetime.
  */
 
+/** One stack the player is carrying. */
+export interface InventoryEntry {
+  itemId: string;
+  name: string;
+  quantity: number;
+}
+
 export interface SessionState {
   userId: string;
   characterName?: string;
@@ -33,6 +40,15 @@ export interface SessionState {
    * independent counter. If the two ever disagree, the experience is right.
    */
   level: number;
+  /**
+   * What the player is carrying, loaded from `mud.inventory` at session open
+   * and written back when it changes.
+   *
+   * Held on the session rather than read per command because `inventory` and
+   * `drop` both need it and a round trip per keystroke is not worth it — but
+   * it is a CACHE of the rows, not the truth. The database is the record.
+   */
+  inventory: InventoryEntry[];
   /** True while the player has 0 HP. The combat resolver flips
    * this; the next command (typically `look`) re-spawns them at
    * the town square. */
@@ -64,6 +80,7 @@ export class SessionRegistry {
       maxHp: DEFAULT_MAX_HP,
       experience: 0,
       level: 1,
+      inventory: [],
       defeated: false,
     };
     this.bySocket.set(socket, state);

@@ -32,6 +32,7 @@ async function main(): Promise<void> {
     console.log(`✓ classes=${counts.classes}`);
     console.log(`✓ rooms=${counts.rooms}`);
     console.log(`✓ items=${counts.items}`);
+    console.log(`✓ placed=${counts.placements}`);
     console.log(`✓ monsters=${counts.monsters}`);
     console.log(`✓ npcs=${counts.npcs}`);
   } finally {
