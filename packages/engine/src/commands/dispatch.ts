@@ -17,6 +17,7 @@ import { withSpan } from "../telemetry/spans.js";
 import { attackHandler } from "./handlers/attack.js";
 import { dropHandler } from "./handlers/drop.js";
 import { getHandler } from "./handlers/get.js";
+import { hideHandler, searchHandler } from "./handlers/conceal.js";
 import { helpHandler } from "./handlers/help.js";
 import { inventoryHandler } from "./handlers/inventory.js";
 import { lookHandler } from "./handlers/look.js";
@@ -56,6 +57,8 @@ const BASE_HANDLERS: Record<string, CommandHandler> = {
   statistics: statisticsHandler,
   experience: experienceHandler,
   rest: restHandler,
+  search: searchHandler,
+  hide: hideHandler,
   help: helpHandler,
   quit: quitHandler,
 };

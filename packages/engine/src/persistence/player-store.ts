@@ -326,13 +326,21 @@ export async function saveInventory(
 export async function saveRoomItems(
   prisma: PrismaClient,
   roomId: string,
-  stacks: Array<{ itemId: string; quantity: number }>,
+  stacks: Array<{ itemId: string; quantity: number; hidden?: boolean }>,
 ): Promise<void> {
   await prisma.$transaction([
     prisma.mudRoomItem.deleteMany({ where: { roomId } }),
     ...stacks.map((s) =>
       prisma.mudRoomItem.create({
-        data: { roomId, itemId: s.itemId, quantity: s.quantity },
+        data: {
+          roomId,
+          itemId: s.itemId,
+          quantity: s.quantity,
+          // Concealment has to survive the round trip, or anything a player
+          // stashes reappears in plain sight on the next boot — which reads
+          // as `hide` not working rather than as a persistence bug.
+          hidden: s.hidden ?? false,
+        },
       }),
     ),
   ]);

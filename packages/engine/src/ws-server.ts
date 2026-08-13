@@ -628,15 +628,21 @@ export class MudWsServer {
     try {
       await savePlayerState(this.prisma, playerId, session);
       await saveInventory(this.prisma, playerId, session.inventory);
-      // Only the room the player is standing in can have changed — `get` and
-      // `drop` are the only verbs that move floor contents, and both act
-      // here. Writing every room would be the obvious way to make this too
-      // slow to keep.
+      // Only the room the player is standing in can have changed — `get`,
+      // `drop`, `hide` and `search` are the only verbs that move floor
+      // contents, and all of them act here. Writing every room would be the
+      // obvious way to make this too slow to keep.
+      //
+      // getAllItemsInRoom, NOT getItemsInRoom: the save is a delete-then-
+      // insert of the whole room, so writing back only the VISIBLE stacks
+      // would delete every hidden one on the next command any player typed.
+      // Nothing would report an error; stashed items would simply stop
+      // existing.
       if (this.world) {
         await saveRoomItems(
           this.prisma,
           session.currentRoomId,
-          this.world.getItemsInRoom(session.currentRoomId),
+          this.world.getAllItemsInRoom(session.currentRoomId),
         );
       }
     } catch {
