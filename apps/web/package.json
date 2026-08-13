@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "The NehsaMUD app — plays Exploration, PVE, and PVP, and is the surface the unit, integration, and e2e tiers drive.",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "next dev",

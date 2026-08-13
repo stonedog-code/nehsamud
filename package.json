@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Text-based MUD — the engine, its Postgres schema, and the app that plays every mode.",
+  "license": "Apache-2.0",
   "type": "module",
   "workspaces": [
     "packages/*",

@@ -2,6 +2,7 @@
   "name": "@nehsamud/engine",
   "version": "0.1.0",
   "description": "The NehsaMUD game engine — world, commands, combat, and the WebSocket/HTTP surface. Runs in one of three modes: exploration, pve, pvp.",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
