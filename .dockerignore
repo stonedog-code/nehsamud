@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+**/dist
+**/.next
+packages/engine-db/generated
+coverage
+test-results
+playwright-report
+.git
+.github
+docs
+e2e
+**/e2e
+*.md
+.env
+.env.local
