@@ -202,9 +202,12 @@ engine should define the repository interfaces it needs and let each host
 supply the implementation, so a standalone deployment is not obliged to carry
 another product's user table.
 
-The FK is still in place. Removing it means a migration, and these migrations
-are checksum-verified against a live database's `_prisma_migrations` table —
-so it is a deliberate schema change, not a tidy-up. Tracked as **OQ5**.
+The FK is still in place, and **PRD-0002 removes it**. That was originally
+deferred because these migrations are checksum-verified against a live
+database, making any change deliberate rather than a tidy-up. It is affordable
+now for a measured reason: production holds **zero** players, inventory rows
+and room items, so the schema can be rebuilt outright. That window closes the
+first time a resident creates a character.
 
 ### Transport
 
@@ -292,7 +295,14 @@ work twice, across a repository boundary.
   risk for the mode to mean anything?
 - **OQ4 — Experience curve shape.** Exponential to 100 is traditional and
   brutal. What total playtime is level 100 meant to represent?
-- **OQ5 — Engine/DB boundary.** How much of the Prisma schema moves into
-  nehsamud versus staying host-supplied? Decided during phase 2.
-- **OQ6 — Public or private.** The engine is destined for npm. Publishing
-  requires auditing for private artwork and internal references first.
+- ~~**OQ5 — Engine/DB boundary.**~~ **Answered by PRD-0002.** The schema stays
+  in this repo; the host-specific part of it — `mud.player.user_id`'s
+  cross-schema FK to a `public.user` table this repo does not own — is
+  **dropped** and becomes an opaque `owner_id` the host supplies. The
+  abstraction originally imagined here (repository interfaces, host injects
+  Prisma) is not needed to achieve that, and would have been speculative.
+- ~~**OQ6 — Public or private.**~~ **Answered: public, Apache-2.0**, holder
+  StoneDogCode L.L.C. The pre-publication audit found no secrets, credentials,
+  issue ids or private artwork; the only finding was the licence itself, which
+  had arrived as un-adopted GPL-3 and conflicted with the proprietary
+  embedding this engine is built for.
