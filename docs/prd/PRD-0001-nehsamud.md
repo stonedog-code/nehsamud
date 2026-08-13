@@ -72,9 +72,13 @@ Numbered and testable. **MUST** is v1 scope; **SHOULD** is v1 if it fits.
   parameter, or cookie may influence it.
 - **R3** In `exploration`, no monster spawns. Enforcement is in the spawner,
   not only the UI.
-- **R4** In `exploration`, combat verbs are not registered in the dispatcher.
-  A player typing `attack` receives an ordinary unknown-command response — the
-  code path must be absent, not hidden.
+- **R4** In `exploration`, combat verbs are not registered in the dispatcher —
+  the handler must be unreachable, not hidden, and no combat span may be
+  opened. A player typing `attack` receives a plain-language refusal
+  ("There is no fighting in this world. Nothing here will harm you."), not the
+  generic unknown-command reply: the expectation is reasonable and deserves an
+  answer, and this audience is the one least served by a response that reads
+  like they made a mistake.
 - **R5** In `pve`, monsters spawn and combat resolves. Players cannot target
   each other.
 - **R6** In `pvp`, players may additionally target each other.
