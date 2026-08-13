@@ -16,6 +16,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # engine-db must build first: it generates the Prisma client the engine
+      # type-checks against. `prisma generate` does not connect to a database,
+      # so no service container is needed here.
+      - run: npm run build --workspace @nehsamud/engine-db
+      - run: npm run build --workspace @nehsamud/engine
       - run: npm run typecheck
       - run: npm run test:unit
 
@@ -31,11 +36,13 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run build --workspace @nehsamud/engine-db
+      - run: npm run build --workspace @nehsamud/engine
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: playwright-report
-          path: playwright-report/
+          path: apps/web/playwright-report/
           retention-days: 7
