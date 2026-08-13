@@ -6,14 +6,35 @@ import {
   applyCommand,
   initialState,
   type Direction,
+  type PreviewCharacter,
   type PreviewState,
 } from "../preview-world";
+import { deriveStats, findClass, findRace } from "../catalog";
 
 function run(state: PreviewState, input: string, mode = "pve" as const) {
   return applyCommand(state, input, mode);
 }
 
-const start = () => initialState("Aria");
+/** A character built from the real catalog, not a hand-rolled stand-in. */
+function character(
+  name = "Aria",
+  raceKey = "dwarf",
+  classKey = "mage",
+): PreviewCharacter {
+  const race = findRace(raceKey);
+  const characterClass = findClass(classKey);
+  if (!race || !characterClass) {
+    throw new Error(`test fixture: unknown ${raceKey}/${classKey}`);
+  }
+  return {
+    name,
+    race,
+    characterClass,
+    stats: deriveStats(race, characterClass),
+  };
+}
+
+const start = () => initialState(character());
 
 describe("world integrity", () => {
   it("starts in a room that exists", () => {
@@ -191,16 +212,71 @@ describe("combat is gated on the mode, not the UI", () => {
 });
 
 describe("initial state", () => {
-  it("greets the player by name", () => {
-    expect(initialState("Bran").lines[0].text).toMatch(/Welcome, Bran\./);
+  it("greets the player by name, race and class", () => {
+    // The race and class appear in the very first line the player reads.
+    // Until the choice was carried this far it was collected, previewed and
+    // then never mentioned again — indistinguishable from being discarded.
+    expect(initialState(character("Bran")).lines[0].text).toMatch(
+      /Welcome, Bran the Dwarf Mage\./,
+    );
   });
 
   it("describes the starting room immediately", () => {
     expect(
-      initialState("Bran").lines.some(
+      initialState(character("Bran")).lines.some(
         (l) => l.kind === "room" && l.text === "Town Square",
       ),
     ).toBe(true);
+  });
+});
+
+describe("stats", () => {
+  it("reports the chosen race and class", () => {
+    const text = run(start(), "stats")
+      .lines.map((l) => l.text)
+      .join("\n");
+    expect(text).toContain("Dwarf Mage");
+    expect(text).toContain("Aria — level 1");
+  });
+
+  it("reports the stats those choices derive", () => {
+    const dwarfMage = deriveStats(findRace("dwarf")!, findClass("mage")!);
+    const text = run(start(), "stats")
+      .lines.map((l) => l.text)
+      .join("\n");
+    expect(text).toContain(`Health: ${dwarfMage.hp} of ${dwarfMage.hp}`);
+    expect(text).toContain(`Damage: ${dwarfMage.damage} per swing`);
+  });
+
+  it("differs between two different characters", () => {
+    // The assertion the whole change exists for: two selections must not
+    // produce the same sheet.
+    const a = run(initialState(character("A", "dwarf", "warrior")), "stats")
+      .lines.map((l) => l.text)
+      .join("\n");
+    const b = run(initialState(character("B", "halfling", "mage")), "stats")
+      .lines.map((l) => l.text)
+      .join("\n");
+    expect(a).not.toBe(b);
+    expect(a).toContain("Dwarf Warrior");
+    expect(b).toContain("Halfling Mage");
+  });
+
+  it("survives a move, because the character is not room state", () => {
+    const moved = run(start(), "north");
+    expect(
+      run(moved, "stats")
+        .lines.map((l) => l.text)
+        .join("\n"),
+    ).toContain("Dwarf Mage");
+  });
+
+  it("is listed in help", () => {
+    expect(
+      run(start(), "help")
+        .lines.map((l) => l.text)
+        .join("\n"),
+    ).toContain("stats");
   });
 });
 

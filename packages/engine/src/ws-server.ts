@@ -52,6 +52,8 @@ import {
   saveInventory,
   saveRoomItems,
   savePlayerState,
+  listPlayableClasses,
+  listPlayableRaces,
 } from "./persistence/player-store.js";
 import { RoomArtGenerator } from "./persistence/room-art-generator.js";
 import { levelForXp } from "./progression.js";
@@ -68,7 +70,24 @@ export interface ClientMessageFrame {
   message: string;
 }
 
-export type ClientFrame = AuthFrame | ClientMessageFrame;
+/**
+ * Create a character in one frame, with the choices already made.
+ *
+ * The web client has a full picker with a stat preview, so making it replay
+ * a conversational flow would be theatre. The text flow below exists for
+ * terminal users; this exists for a client that already knows the answers.
+ */
+export interface CreateCharacterFrame {
+  type: "CREATE_CHARACTER";
+  name: string;
+  race: string;
+  class: string;
+}
+
+export type ClientFrame =
+  | AuthFrame
+  | ClientMessageFrame
+  | CreateCharacterFrame;
 
 export interface ServerMessageFrame {
   type: "SERVER_MESSAGE";
@@ -186,6 +205,26 @@ function sheetFor(record: {
   };
 }
 
+/**
+ * Match what the player typed to one of the offered options.
+ *
+ * Slug, then exact name, then prefix — so `half-orc`, `Half-Orc` and `half`
+ * all land on the same row. Case-insensitive throughout, because nobody
+ * types a capital letter into a MUD.
+ */
+function matchOption<T extends { slug: string; name: string }>(
+  options: T[],
+  typed: string,
+): T | undefined {
+  const q = typed.trim().toLowerCase();
+  if (!q) return undefined;
+  return (
+    options.find((o) => o.slug.toLowerCase() === q) ??
+    options.find((o) => o.name.toLowerCase() === q) ??
+    options.find((o) => o.name.toLowerCase().startsWith(q))
+  );
+}
+
 export class MudWsServer {
   private readonly wss: WebSocketServer;
   private readonly connections = new Map<WebSocket, ConnectionState>();
@@ -214,7 +253,16 @@ export class MudWsServer {
    *   `create <name>`  (or just `<name>`)
    * to seed the character. Cleared once the player exists and the
    * regular session is open. */
-  private readonly awaitingPlayerName = new WeakSet<WebSocket>();
+  /**
+   * Half-finished character creation, for the text flow.
+   *
+   * A WeakSet could only record THAT a socket was mid-creation; the flow now
+   * has three answers to collect, so it needs somewhere to put the first two.
+   */
+  private readonly pendingCreation = new Map<
+    WebSocket,
+    { name?: string; raceSlug?: string }
+  >();
 
   constructor(options: MudWsServerOptions) {
     this.world = options.world;
@@ -299,6 +347,16 @@ export class MudWsServer {
       return;
     }
 
+    if (frame.type === "CREATE_CHARACTER") {
+      const userId = state.userId;
+      if (!userId) return;
+      void this.createCharacter(socket, userId, frame.name, {
+        raceSlug: frame.race,
+        classSlug: frame.class,
+      });
+      return;
+    }
+
     if (frame.type !== "CLIENT_MESSAGE") {
       return;
     }
@@ -359,7 +417,7 @@ export class MudWsServer {
       // No player yet — prompt the user to create one. The next
       // CLIENT_MESSAGE is interpreted as `create <name>` (or just
       // `<name>`) and we route it through `handleCreatePlayer`.
-      this.awaitingPlayerName.add(socket);
+      this.pendingCreation.set(socket, {});
       send(socket, {
         type: "SERVER_MESSAGE",
         message: "Welcome to HopperMud! You don't have a character yet.",
@@ -450,25 +508,102 @@ export class MudWsServer {
     raw: string,
   ): Promise<void> {
     if (!this.world || !this.prisma) {
-      // Shouldn't happen — `awaitingPlayerName` is only set when
-      // both are present. Defensive guard so a misuse doesn't
-      // crash the process.
-      this.awaitingPlayerName.delete(socket);
+      // Shouldn't happen — `pendingCreation` is only set when both are
+      // present. Defensive guard so a misuse doesn't crash the process.
+      this.pendingCreation.delete(socket);
       return;
     }
-    // Accept either `create Aelric`, `Aelric`, or even an
-    // accidental leading slash. Anything starting with `create`
-    // strips the verb; otherwise the whole text is the name.
+    const pending = this.pendingCreation.get(socket) ?? {};
     const trimmed = raw.trim();
-    const m = /^(?:create\s+)?(.+)$/i.exec(trimmed);
-    const name = m?.[1]?.trim() ?? "";
-    if (!name) {
+
+    /* ── Step 1: the name ──────────────────────────────────────── */
+    if (pending.name === undefined) {
+      // Accept `create Aelric`, `Aelric`, or an accidental leading verb.
+      const m = /^(?:create\s+)?(.+)$/i.exec(trimmed);
+      const name = m?.[1]?.trim() ?? "";
+      if (!name) {
+        send(socket, {
+          type: "SERVER_MESSAGE",
+          message: "Name can't be empty. Try `create Aelric`.",
+        });
+        return;
+      }
+      pending.name = name;
+      this.pendingCreation.set(socket, pending);
+      await this.promptForRace(socket);
+      return;
+    }
+
+    /* ── Step 2: the race ──────────────────────────────────────── */
+    if (pending.raceSlug === undefined) {
+      const races = await listPlayableRaces(this.prisma);
+      const chosen = matchOption(races, trimmed);
+      if (!chosen) {
+        send(socket, {
+          type: "SERVER_MESSAGE",
+          message: `"${trimmed}" isn't one of the races. Choose one of: ${races
+            .map((r) => r.name)
+            .join(", ")}.`,
+        });
+        return;
+      }
+      pending.raceSlug = chosen.slug;
+      this.pendingCreation.set(socket, pending);
+      const classes = await listPlayableClasses(this.prisma);
       send(socket, {
         type: "SERVER_MESSAGE",
-        message: "Name can't be empty. Try `create Aelric`.",
+        message: `${chosen.name} it is. Now choose a class: ${classes
+          .map((c) => c.name)
+          .join(", ")}.`,
       });
       return;
     }
+
+    /* ── Step 3: the class, then create ────────────────────────── */
+    const classes = await listPlayableClasses(this.prisma);
+    const chosenClass = matchOption(classes, trimmed);
+    if (!chosenClass) {
+      send(socket, {
+        type: "SERVER_MESSAGE",
+        message: `"${trimmed}" isn't one of the classes. Choose one of: ${classes
+          .map((c) => c.name)
+          .join(", ")}.`,
+      });
+      return;
+    }
+
+    await this.createCharacter(socket, userId, pending.name, {
+      raceSlug: pending.raceSlug,
+      classSlug: chosenClass.slug,
+    });
+  }
+
+  /** List the playable races and ask the player to pick one. */
+  private async promptForRace(socket: WebSocket): Promise<void> {
+    if (!this.prisma) return;
+    const races = await listPlayableRaces(this.prisma);
+    send(socket, {
+      type: "SERVER_MESSAGE",
+      message: `Choose a race: ${races.map((r) => r.name).join(", ")}.`,
+    });
+  }
+
+  /**
+   * Create the character and drop the player into the world.
+   *
+   * Shared by the structured CREATE_CHARACTER frame and the last step of the
+   * text flow, so a character made from the web picker and one made by
+   * typing are the same character — including which failures are reported
+   * and how.
+   */
+  private async createCharacter(
+    socket: WebSocket,
+    userId: string,
+    name: string,
+    choice: { raceSlug: string; classSlug: string },
+  ): Promise<void> {
+    if (!this.world || !this.prisma) return;
+
     const spawnRoom = this.world.getRoomByEnumKey(this.spawnRoomEnumKey);
     if (!spawnRoom) {
       send(socket, {
@@ -477,26 +612,46 @@ export class MudWsServer {
       });
       return;
     }
+
     let created;
     try {
-      created = await createPlayer(this.prisma, userId, name, spawnRoom.id);
+      created = await createPlayer(
+        this.prisma,
+        userId,
+        name,
+        spawnRoom.id,
+        choice,
+      );
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const nameTaken = /unique/i.test(message);
       send(socket, {
         type: "SERVER_MESSAGE",
-        message:
-          err instanceof Error && /unique/i.test(err.message)
-            ? `That name is taken. Try another with \`create <name>\`.`
-            : `Couldn't create character: ${
-                err instanceof Error ? err.message : String(err)
-              }. Try \`create <name>\` again.`,
+        message: nameTaken
+          ? "That name is taken. Try another with `create <name>`."
+          : `Couldn't create character: ${message}`,
       });
+
+      // Recovery has to rewind to the step that actually failed, or the
+      // player's retry is read as an answer to a different question. A
+      // rejected NAME means asking for a name again — otherwise
+      // "create Dahlia" arrives while the server is waiting for a race and
+      // is rejected as an unknown race, which is a baffling thing to be told.
+      // Anything else keeps the name and re-asks the choices.
+      const pending = this.pendingCreation.get(socket);
+      if (pending) {
+        delete pending.raceSlug;
+        if (nameTaken) delete pending.name;
+        this.pendingCreation.set(socket, pending);
+      }
       return;
     }
-    this.awaitingPlayerName.delete(socket);
+
+    this.pendingCreation.delete(socket);
     this.playerIdBySocket.set(socket, created.id);
     send(socket, {
       type: "SERVER_MESSAGE",
-      message: `Welcome, ${created.name}! Your adventure begins…`,
+      message: `Welcome, ${created.name} the ${created.raceName} ${created.className}! Your adventure begins…`,
     });
     await this.startSessionAndAutoLook(socket, userId, spawnRoom.id, {
       characterName: created.name,
@@ -514,13 +669,13 @@ export class MudWsServer {
     }
     // First post-AUTH message for a brand-new user: route through the
     // character-creation handler, not the gameplay dispatcher.
-    if (this.awaitingPlayerName.has(socket)) {
+    if (this.pendingCreation.has(socket)) {
       const conn = this.connections.get(socket);
       const userId = conn?.userId;
       if (!userId) {
         // Lost the auth state somehow — let the next frame re-trigger
         // the protocol-level handling.
-        this.awaitingPlayerName.delete(socket);
+        this.pendingCreation.delete(socket);
         return;
       }
       void this.handleCreatePlayer(socket, userId, raw);

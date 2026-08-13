@@ -153,6 +153,40 @@ export async function loadPlayer(
   return row ? toRecord(row) : null;
 }
 
+/** The race and class a player chose at creation. Both required. */
+export interface CharacterChoice {
+  raceSlug: string;
+  classSlug: string;
+}
+
+/** One playable option, for the prompts the text creation flow shows. */
+export interface PlayableOption {
+  slug: string;
+  name: string;
+}
+
+/** Playable races, alphabetically. */
+export async function listPlayableRaces(
+  prisma: PrismaClient,
+): Promise<PlayableOption[]> {
+  return prisma.mudRace.findMany({
+    where: { playable: true },
+    orderBy: { name: "asc" },
+    select: { slug: true, name: true },
+  });
+}
+
+/** Playable classes, alphabetically. */
+export async function listPlayableClasses(
+  prisma: PrismaClient,
+): Promise<PlayableOption[]> {
+  return prisma.mudClass.findMany({
+    where: { playable: true },
+    orderBy: { name: "asc" },
+    select: { slug: true, name: true },
+  });
+}
+
 /**
  * Create a brand-new MudPlayer at the given spawn room with the
  * provided name. Race + class default to the seed's first playable
@@ -171,24 +205,35 @@ export async function createPlayer(
   userId: string,
   name: string,
   spawnRoomId: string,
+  choice: CharacterChoice,
 ): Promise<PlayerRecord> {
   const trimmed = name.trim();
   if (!trimmed) {
     throw new Error("createPlayer: name is required");
   }
-  const race = await prisma.mudRace.findFirst({
-    where: { playable: true },
-    orderBy: { name: "asc" },
-    select: { id: true },
+
+  // Both slugs are REQUIRED and looked up by slug — no `findFirst` fallback.
+  // The old version took the alphabetically-first playable row when nothing
+  // said otherwise, and because nothing ever did say otherwise, every
+  // character in the database is the same race and class. A default here is
+  // indistinguishable from a working selection right up until someone reads
+  // the rows, so there is no default.
+  const race = await prisma.mudRace.findUnique({
+    where: { slug: choice.raceSlug },
+    select: { id: true, playable: true },
   });
-  const klass = await prisma.mudClass.findFirst({
-    where: { playable: true },
-    orderBy: { name: "asc" },
-    select: { id: true },
-  });
-  if (!race || !klass) {
+  if (!race || !race.playable) {
     throw new Error(
-      "createPlayer: no playable race or class found. Run `npm run seed` first.",
+      `createPlayer: "${choice.raceSlug}" is not a playable race.`,
+    );
+  }
+  const klass = await prisma.mudClass.findUnique({
+    where: { slug: choice.classSlug },
+    select: { id: true, playable: true },
+  });
+  if (!klass || !klass.playable) {
+    throw new Error(
+      `createPlayer: "${choice.classSlug}" is not a playable class.`,
     );
   }
   const created = await prisma.mudPlayer.create({
@@ -223,11 +268,23 @@ export async function loadOrCreatePlayer(
 ): Promise<PlayerRecord> {
   const existing = await loadPlayer(prisma, userId);
   if (existing) return existing;
+  // This deprecated path has no player to ask, so it has to name a choice.
+  // Stated here rather than defaulted inside createPlayer, so the one place
+  // that still auto-picks is visible instead of being everyone's silent
+  // behaviour.
+  const [race] = await listPlayableRaces(prisma);
+  const [klass] = await listPlayableClasses(prisma);
+  if (!race || !klass) {
+    throw new Error(
+      "loadOrCreatePlayer: no playable race or class found. Run `npm run seed` first.",
+    );
+  }
   return createPlayer(
     prisma,
     userId,
     `Traveler-${randomUUID().slice(0, 8)}`,
     spawnRoomId,
+    { raceSlug: race.slug, classSlug: klass.slug },
   );
 }
 

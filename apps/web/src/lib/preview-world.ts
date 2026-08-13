@@ -11,6 +11,7 @@
  * engine, so the e2e test asserting that refusal is meaningful from day one.
  */
 
+import type { CharacterClass, DerivedStats, Race } from "./catalog";
 import { MODES, type GameMode } from "./modes";
 
 export const DIRECTIONS = [
@@ -116,9 +117,25 @@ export interface Line {
   readonly text: string;
 }
 
+/**
+ * Who the player chose to be.
+ *
+ * Held on the preview state so the choice is observable in-game. Until this
+ * existed, the creation form collected a race and a class, previewed their
+ * effect, and then nothing downstream ever mentioned them again — which is
+ * indistinguishable from the choice not being recorded at all.
+ */
+export interface PreviewCharacter {
+  readonly name: string;
+  readonly race: Race;
+  readonly characterClass: CharacterClass;
+  readonly stats: DerivedStats;
+}
+
 export interface PreviewState {
   readonly roomKey: string;
   readonly lines: readonly Line[];
+  readonly character: PreviewCharacter;
 }
 
 function describeRoom(room: PreviewRoom): Line[] {
@@ -136,18 +153,35 @@ function describeRoom(room: PreviewRoom): Line[] {
   ];
 }
 
-export function initialState(characterName: string): PreviewState {
+export function initialState(character: PreviewCharacter): PreviewState {
   const room = PREVIEW_ROOMS[START_ROOM];
   return {
     roomKey: START_ROOM,
+    character,
     lines: [
       {
         kind: "system",
-        text: `Welcome, ${characterName}. Type "help" for a list of commands.`,
+        text: `Welcome, ${character.name} the ${character.race.name} ${character.characterClass.name}. Type "help" for a list of commands.`,
       },
       ...describeRoom(room),
     ],
   };
+}
+
+/** The character sheet, as the preview can render it. */
+function describeCharacter(character: PreviewCharacter): Line[] {
+  return [
+    { kind: "room", text: `${character.name} — level 1` },
+    {
+      kind: "text",
+      text: `${character.race.name} ${character.characterClass.name}`,
+    },
+    {
+      kind: "text",
+      text: `Health: ${character.stats.hp} of ${character.stats.hp}`,
+    },
+    { kind: "text", text: `Damage: ${character.stats.damage} per swing` },
+  ];
 }
 
 const HELP_TEXT = [
@@ -155,6 +189,7 @@ const HELP_TEXT = [
   "          southwest, up, down — or their short forms (n, s, e, w, ne,",
   "          nw, se, sw, u, d).",
   "look    — describe where you are.",
+  "stats   — your race, class and what they get you.",
   "help    — show this list.",
 ].join("\n");
 
@@ -175,6 +210,7 @@ export function applyCommand(
   const echo: Line = { kind: "echo", text: `> ${input}` };
   const append = (...lines: Line[]): PreviewState => ({
     roomKey: state.roomKey,
+    character: state.character,
     lines: [...state.lines, echo, ...lines],
   });
 
@@ -188,6 +224,10 @@ export function applyCommand(
 
   if (verb === "look" || verb === "l") {
     return append(...describeRoom(room));
+  }
+
+  if (verb === "stats" || verb === "statistics" || verb === "stat") {
+    return append(...describeCharacter(state.character));
   }
 
   // Combat is refused in Exploration by capability, not by hiding the verb
@@ -232,6 +272,7 @@ export function applyCommand(
     const nextRoom = PREVIEW_ROOMS[target];
     return {
       roomKey: target,
+      character: state.character,
       lines: [...state.lines, echo, ...describeRoom(nextRoom)],
     };
   }

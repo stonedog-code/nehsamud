@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { deriveStats, findClass, findRace } from "@/lib/catalog";
 import { isGameMode, isModeEnabled, MODES } from "@/lib/modes";
 import { Terminal } from "@/components/Terminal";
 
@@ -25,14 +26,26 @@ export default async function PlayPage({
   const query = await searchParams;
   const characterName = typeof query.name === "string" ? query.name : undefined;
 
-  // No character means someone reached this URL directly. Send them to create
-  // one rather than dropping them into a world as nobody.
-  if (!characterName) {
+  // Race and class travel in the query alongside the name. Until this read
+  // existed, the creation form collected both, previewed their effect, and
+  // this page dropped them on the floor — every character was whatever the
+  // server picked by default, and nothing anywhere said so.
+  const race = typeof query.race === "string" ? findRace(query.race) : undefined;
+  const characterClass =
+    typeof query.class === "string" ? findClass(query.class) : undefined;
+
+  // An unrecognised race or class is treated exactly like a missing name:
+  // back to creation. Substituting a default here is what the bug was —
+  // a silent fallback and a working selection look identical from the outside.
+  if (!characterName || !race || !characterClass) {
     return (
       <>
         <header className="page-header">
           <h1>No character yet</h1>
-          <p>You need a character before you can enter the world.</p>
+          <p>
+            You need a character — a name, a race and a class — before you can
+            enter the world.
+          </p>
         </header>
         <Link className="button" href={`/play/${mode}/create`}>
           Create a character
@@ -48,8 +61,9 @@ export default async function PlayPage({
       <header className="page-header">
         <h1>{definition.name}</h1>
         <p>
-          Playing as <strong>{characterName}</strong>. Type{" "}
-          <code>help</code> to see what you can do, or a direction to move.
+          Playing as <strong>{characterName}</strong>, a {race.name}{" "}
+          {characterClass.name}. Type <code>help</code> to see what you can
+          do, or a direction to move.
         </p>
       </header>
 
@@ -62,7 +76,15 @@ export default async function PlayPage({
         </p>
       </div>
 
-      <Terminal mode={mode} characterName={characterName} />
+      <Terminal
+        mode={mode}
+        character={{
+          name: characterName,
+          race,
+          characterClass,
+          stats: deriveStats(race, characterClass),
+        }}
+      />
     </>
   );
 }
