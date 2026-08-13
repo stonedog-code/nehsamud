@@ -24,29 +24,76 @@ export interface ParsedCommand {
   rest: string;
 }
 
+/**
+ * Every direction the world can use, in COMPASS order.
+ *
+ * Order matters because `look` renders exits from it. Alphabetical put
+ * "northeast" between "north" and "northwest", which reads as a list of words
+ * rather than a set of headings — tolerable with four directions, actively
+ * confusing with eight. Vertical last, because up and down are not on the
+ * compass and a player scanning for a heading should not have them
+ * interleaved.
+ *
+ * Direction names are ENGINE-OWNED and not pack-configurable (PRD-0002 R13):
+ * `north` is a mechanic, and renaming it would break both muscle memory and
+ * the scripting language.
+ */
+export const DIRECTIONS = [
+  "north",
+  "northeast",
+  "east",
+  "southeast",
+  "south",
+  "southwest",
+  "west",
+  "northwest",
+  "up",
+  "down",
+] as const;
+
+export type Direction = (typeof DIRECTIONS)[number];
+
+const DIRECTION_SET: ReadonlySet<string> = new Set(DIRECTIONS);
+
+/** Rank for rendering an exit list in compass order. */
+const DIRECTION_ORDER = new Map<string, number>(
+  DIRECTIONS.map((d, i) => [d, i]),
+);
+
+/**
+ * Sort exit names into compass order, with anything unrecognised last and
+ * alphabetical among itself — a pack can name an exit `in` or `out` and it
+ * still renders predictably rather than disappearing.
+ */
+export function sortDirections(names: readonly string[]): string[] {
+  return [...names].sort((a, b) => {
+    const ra = DIRECTION_ORDER.get(a);
+    const rb = DIRECTION_ORDER.get(b);
+    if (ra !== undefined && rb !== undefined) return ra - rb;
+    if (ra !== undefined) return -1;
+    if (rb !== undefined) return 1;
+    return a.localeCompare(b);
+  });
+}
+
 const VERB_ALIASES: Record<string, string> = {
   l: "look",
   i: "inventory",
   inv: "inventory",
   n: "north",
-  s: "south",
+  ne: "northeast",
   e: "east",
+  se: "southeast",
+  s: "south",
+  sw: "southwest",
   w: "west",
+  nw: "northwest",
   u: "up",
   d: "down",
   q: "quit",
   "?": "help",
   h: "help",
 };
-
-const DIRECTIONS = new Set([
-  "north",
-  "south",
-  "east",
-  "west",
-  "up",
-  "down",
-]);
 
 export function parseCommand(raw: string): ParsedCommand {
   const trimmed = raw.trim();
@@ -63,7 +110,7 @@ export function parseCommand(raw: string): ParsedCommand {
 
   // Bare-direction shortcut: "north" implies "move north" so the
   // command processor can dispatch through a single move handler.
-  if (DIRECTIONS.has(verb)) {
+  if (DIRECTION_SET.has(verb)) {
     return { verb: "move", args: [verb], rest: verb };
   }
 

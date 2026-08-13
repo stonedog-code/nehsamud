@@ -101,11 +101,17 @@ export const ROOMS: RoomFixture[] = [
     name: "Blacksmith",
     description:
       "The blacksmith's shop. An assortment of wares are on display on iron-bound racks. A doorway " +
-      "leads into the back room; the front door goes south to the moonroad.",
+      "leads into the back room; the front door goes south to the moonroad. A side gate opens " +
+      "southeast onto the market stalls.",
     environment: "townsmee",
     exits: {
       north: "TOWNSMEE_BLACKSMITH_BACK",
       south: "TOWNSMEE_MOONROAD_EAST1",
+      // The one diagonal in Townsmee, and it is geometrically honest rather
+      // than decorative: the smithy sits north of the moonroad and the market
+      // east of it, so the two are corner to corner. Paired with the market's
+      // `northwest` — the bidirectional-exits invariant requires it.
+      southeast: "TOWNSMEE_MARKET",
     },
   },
   {
@@ -123,11 +129,13 @@ export const ROOMS: RoomFixture[] = [
     name: "Townsmee Market",
     description:
       "A handful of stalls arranged around a packed-dirt plaza. A merchant nods at you from the " +
-      "nearest. The sheriff's office is east; the exit west returns to the moonroad.",
+      "nearest. The sheriff's office is east; the exit west returns to the moonroad, and a side " +
+      "gate northwest cuts through to the blacksmith.",
     environment: "townsmee",
     exits: {
       west: "TOWNSMEE_MOONROAD_EAST1",
       east: "TOWNSMEE_SHERIFF",
+      northwest: "TOWNSMEE_BLACKSMITH",
     },
   },
   {

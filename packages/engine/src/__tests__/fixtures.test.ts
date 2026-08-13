@@ -14,6 +14,7 @@
  *     layer expects these specific values).
  */
 
+import { parseCommand } from "../commands/parser.js";
 import {
   CLASSES,
   EFFECTS,
@@ -190,5 +191,47 @@ describe("fixture integrity — minimum content", () => {
       "south",
       "west",
     ]);
+  });
+});
+
+describe("diagonal exits are usable end to end", () => {
+  // The issue's actual "done when": a seeded room with a diagonal exit is
+  // walkable. Asserting the parser alone would not have caught a fixture that
+  // named a direction the world could not resolve.
+  it("Townsmee has at least one diagonal, wired both ways", () => {
+    const byKey = new Map(ROOMS.map((r) => [r.enumKey, r]));
+    const smithy = byKey.get("TOWNSMEE_BLACKSMITH");
+    const market = byKey.get("TOWNSMEE_MARKET");
+
+    expect(smithy?.exits.southeast).toBe("TOWNSMEE_MARKET");
+    expect(market?.exits.northwest).toBe("TOWNSMEE_BLACKSMITH");
+  });
+
+  it("the diagonal a player types resolves to the room the fixture names", () => {
+    const byKey = new Map(ROOMS.map((r) => [r.enumKey, r]));
+    const smithy = byKey.get("TOWNSMEE_BLACKSMITH")!;
+
+    // Exactly what the command processor does: parse, then look the parsed
+    // direction up in the room's exits. This is the step that used to break —
+    // `se` never became `southeast`, so the lookup was never attempted.
+    const parsed = parseCommand("se");
+    expect(parsed.verb).toBe("move");
+    expect(smithy.exits[parsed.args[0]!]).toBe("TOWNSMEE_MARKET");
+  });
+
+  it("every direction any fixture uses is one the parser knows", () => {
+    // Otherwise a fixture can name an exit no player can ever type, and
+    // nothing fails — the room is simply unreachable in that direction.
+    const used = new Set<string>();
+    for (const room of ROOMS) {
+      for (const dir of Object.keys(room.exits)) used.add(dir);
+    }
+    for (const dir of used) {
+      expect(parseCommand(dir)).toEqual({
+        verb: "move",
+        args: [dir],
+        rest: dir,
+      });
+    }
   });
 });

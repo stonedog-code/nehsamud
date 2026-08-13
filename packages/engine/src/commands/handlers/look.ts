@@ -19,6 +19,7 @@
  */
 
 import type { CachedRoom, WorldState } from "../../world/world-state.js";
+import { sortDirections } from "../parser.js";
 import type { CommandHandler } from "../types.js";
 import { reply } from "../types.js";
 
@@ -38,7 +39,8 @@ function renderRoom(world: WorldState, room: CachedRoom): string[] {
         .join(", ")}.`,
     );
   }
-  const exits = Object.keys(room.exits).sort();
+  // Compass order, not alphabetical — see DIRECTIONS in the parser.
+  const exits = sortDirections(Object.keys(room.exits));
   if (exits.length > 0) {
     lines.push(`Exits: ${exits.join(", ")}.`);
   } else {
