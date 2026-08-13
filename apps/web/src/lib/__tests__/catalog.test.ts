@@ -1,6 +1,5 @@
+import { deriveCharacter, maxHpForLevel } from "@nehsamud/engine/character";
 import {
-  BASE_DAMAGE,
-  BASE_HP,
   CLASSES,
   NAME_MAX,
   RACES,
@@ -30,13 +29,42 @@ describe("catalog", () => {
 });
 
 describe("deriveStats", () => {
-  it("sums the base with both modifiers", () => {
+  it("returns exactly what the engine will build", () => {
+    // The assertion that matters: this is not an independent formula that
+    // happens to agree, it IS the engine's. The previous version of this
+    // test asserted against a local BASE_HP + a local modifier table, and
+    // passed happily while the server produced different numbers.
+    for (const race of RACES) {
+      for (const characterClass of CLASSES) {
+        const engine = deriveCharacter(
+          race.modifiers,
+          characterClass.modifiers,
+        );
+        expect(deriveStats(race, characterClass)).toEqual({
+          hp: engine.maxHp,
+          damage: engine.baseDamage,
+        });
+      }
+    }
+  });
+
+  it("previews the level-1 pool, not some other level", () => {
     const dwarf = findRace("dwarf")!;
     const warrior = findClass("warrior")!;
-    expect(deriveStats(dwarf, warrior)).toEqual({
-      hp: BASE_HP + 4 + 6,
-      damage: BASE_DAMAGE + 0 + 3,
-    });
+    const { attributes } = deriveCharacter(dwarf.modifiers, warrior.modifiers);
+    expect(deriveStats(dwarf, warrior).hp).toBe(
+      maxHpForLevel(1, attributes.constitution),
+    );
+  });
+
+  it("makes a tough combination tougher than a frail one", () => {
+    // Direction, not just difference: a Dwarf Warrior must out-live a
+    // Halfling Mage, or the modifier tables are being read but not applied
+    // in the way the descriptions promise.
+    const tough = deriveStats(findRace("dwarf")!, findClass("warrior")!);
+    const frail = deriveStats(findRace("halfling")!, findClass("mage")!);
+    expect(tough.hp).toBeGreaterThan(frail.hp);
+    expect(tough.damage).toBeGreaterThan(frail.damage);
   });
 
   it("makes different combinations genuinely different", () => {

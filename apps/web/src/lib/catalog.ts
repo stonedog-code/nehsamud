@@ -1,21 +1,40 @@
 /**
  * Race and class catalog for character creation.
  *
- * Static for the scaffold. The live app reads these from `mud.race` /
- * `mud.class` once the engine extraction lands — the shapes here mirror those
- * rows so the swap is a data-source change rather than a UI change.
+ * THE ENGINE IS THE SOURCE OF TRUTH. Both the list and the arithmetic come
+ * from `@nehsamud/engine`: the same fixtures the seed writes into
+ * `mud.race` / `mud.class`, and the same `deriveCharacter` the server runs
+ * when it creates the row.
  *
- * The modifiers are shown to the player at creation because PRD-0001 R9
- * requires the choice to measurably change play. Displaying numbers that the
- * engine does not yet apply would be a lie, so the UI labels them as the
- * intended effect until the engine honours them.
+ * Imported from the `/character` and `/catalog` SUBPATHS, never the package
+ * root. The root pulls in the whole server — express, Prisma, OpenTelemetry —
+ * and this file is reached from a client component, so a root import breaks
+ * the browser build outright. Those two entry points are pure arithmetic and
+ * pure data, with no runtime dependencies at all.
+ *
+ * This file used to keep its own six races, its own six classes and its own
+ * hp/damage modifier table — numbers unrelated to the engine's seven
+ * attribute modifiers. The creation screen previewed "40 HP" for a Dwarf
+ * Warrior while the server built something else entirely, and nothing
+ * anywhere compared the two. A preview that disagrees with the engine is
+ * worse than no preview, because the player has been shown a promise.
  */
 
+import { deriveCharacter } from "@nehsamud/engine/character";
+import {
+  CLASSES as ENGINE_CLASSES,
+  RACES as ENGINE_RACES,
+} from "@nehsamud/engine/catalog";
+
+/** The seven attribute modifiers a race or class contributes. */
 export interface StatModifiers {
-  /** Added to base starting HP. */
-  readonly hp: number;
-  /** Added to base melee damage. */
-  readonly damage: number;
+  readonly strengthMod: number;
+  readonly intelligenceMod: number;
+  readonly wisdomMod: number;
+  readonly charismaMod: number;
+  readonly constitutionMod: number;
+  readonly dexterityMod: number;
+  readonly luckMod: number;
 }
 
 export interface Race {
@@ -32,88 +51,28 @@ export interface CharacterClass {
   readonly modifiers: StatModifiers;
 }
 
-export const RACES: readonly Race[] = [
-  {
-    key: "human",
-    name: "Human",
-    description: "Adaptable and even-tempered. No weaknesses worth naming.",
-    modifiers: { hp: 0, damage: 0 },
-  },
-  {
-    key: "elf",
-    name: "Elf",
-    description: "Quick and perceptive, but slight of frame.",
-    modifiers: { hp: -2, damage: 1 },
-  },
-  {
-    key: "dwarf",
-    name: "Dwarf",
-    description: "Stubborn and hard to put down.",
-    modifiers: { hp: 4, damage: 0 },
-  },
-  {
-    key: "halfling",
-    name: "Halfling",
-    description: "Small, lucky, and much harder to hit than they look.",
-    modifiers: { hp: -3, damage: 0 },
-  },
-  {
-    key: "orc",
-    name: "Orc",
-    description: "Enormously strong and entirely unsubtle.",
-    modifiers: { hp: 3, damage: 2 },
-  },
-  {
-    key: "half-orc",
-    name: "Half-Orc",
-    description: "The strength, tempered by the patience to use it.",
-    modifiers: { hp: 2, damage: 1 },
-  },
-];
+/** Engine fixture → the shape this UI renders. Slug becomes `key`. */
+function toOption<T extends { slug: string; name: string; description: string }>(
+  fixture: T & StatModifiers,
+): { key: string; name: string; description: string; modifiers: StatModifiers } {
+  return {
+    key: fixture.slug,
+    name: fixture.name,
+    description: fixture.description,
+    modifiers: {
+      strengthMod: fixture.strengthMod,
+      intelligenceMod: fixture.intelligenceMod,
+      wisdomMod: fixture.wisdomMod,
+      charismaMod: fixture.charismaMod,
+      constitutionMod: fixture.constitutionMod,
+      dexterityMod: fixture.dexterityMod,
+      luckMod: fixture.luckMod,
+    },
+  };
+}
 
-export const CLASSES: readonly CharacterClass[] = [
-  {
-    key: "warrior",
-    name: "Warrior",
-    description: "Front line. Hits hard, takes hits, asks no questions.",
-    modifiers: { hp: 6, damage: 3 },
-  },
-  {
-    key: "mage",
-    name: "Mage",
-    description: "Devastating at range, fragile up close.",
-    modifiers: { hp: -4, damage: 4 },
-  },
-  {
-    key: "rogue",
-    name: "Rogue",
-    description: "Strikes from the dark and is gone before the reply.",
-    modifiers: { hp: 0, damage: 2 },
-  },
-  {
-    key: "cleric",
-    name: "Cleric",
-    description: "Endures, and keeps others standing.",
-    modifiers: { hp: 4, damage: 1 },
-  },
-  {
-    key: "ranger",
-    name: "Ranger",
-    description: "At home in the wild, and a reliable shot.",
-    modifiers: { hp: 2, damage: 2 },
-  },
-  {
-    key: "bard",
-    name: "Bard",
-    description: "Talks their way past most of it, fights the rest.",
-    modifiers: { hp: 1, damage: 1 },
-  },
-];
-
-/** Base pool before race and class modifiers. Mirrors the engine's current
- * `DEFAULT_MAX_HP`, so the preview matches what the server will build. */
-export const BASE_HP = 30;
-export const BASE_DAMAGE = 5;
+export const RACES: readonly Race[] = ENGINE_RACES.map(toOption);
+export const CLASSES: readonly CharacterClass[] = ENGINE_CLASSES.map(toOption);
 
 export function findRace(key: string): Race | undefined {
   return RACES.find((race) => race.key === key);
@@ -131,30 +90,19 @@ export interface DerivedStats {
 /**
  * The stat preview shown at creation.
  *
- * Floored at 1 so an unlucky combination cannot preview a character that is
- * dead on arrival — with the current tables the worst case is a Halfling Mage
- * at 23 HP, but the tables are expected to grow and the floor should not
- * depend on anyone re-checking the arithmetic.
+ * Delegates to the engine's `deriveCharacter`, so what the player is shown
+ * here is by construction what the server will write. Any floor or cap lives
+ * there, in one place, rather than being re-decided by whoever is drawing a
+ * form.
  */
 export function deriveStats(
   race: Race,
   characterClass: CharacterClass,
 ): DerivedStats {
-  return {
-    hp: Math.max(1, BASE_HP + race.modifiers.hp + characterClass.modifiers.hp),
-    damage: Math.max(
-      1,
-      BASE_DAMAGE + race.modifiers.damage + characterClass.modifiers.damage,
-    ),
-  };
+  const derived = deriveCharacter(race.modifiers, characterClass.modifiers);
+  return { hp: derived.maxHp, damage: derived.baseDamage };
 }
 
-/**
- * Character names are the player's identity in the world, so the rules are
- * deliberately narrow: letters, and single interior hyphens or apostrophes.
- * Rejecting rather than sanitising means the player always sees the name they
- * chose, never a silently altered one.
- */
 export const NAME_MIN = 3;
 export const NAME_MAX = 20;
 

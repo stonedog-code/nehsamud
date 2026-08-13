@@ -13,6 +13,35 @@
  * `dist/` subpaths. Deep imports are not part of the contract and will move.
  */
 
+/* ── Character derivation ─────────────────────────────────────── */
+export {
+  BASE_ATTRIBUTE,
+  BASE_MAX_HP,
+  BASE_PLAYER_DAMAGE,
+  DAMAGE_PER_STRENGTH,
+  HP_PER_CONSTITUTION,
+  HP_PER_LEVEL,
+  HP_PER_LEVEL_PER_CONSTITUTION,
+  MIN_ATTRIBUTE,
+  baseDamageFor,
+  deriveAttributes,
+  deriveCharacter,
+  maxHpForLevel,
+  type AttributeMods,
+  type Attributes,
+  type DerivedCharacter,
+} from "./character.js";
+
+/**
+ * The seeded race and class catalogs.
+ *
+ * Exported so a creation screen can offer exactly what the seed puts in the
+ * database, with exactly the modifiers the engine will apply. The web app
+ * used to keep its own list with its own hp/damage numbers, which meant the
+ * stat preview promised values the engine would never produce.
+ */
+export { CLASSES, RACES } from "./seed/fixtures/index.js";
+
 /* ── Modes ────────────────────────────────────────────────────── */
 export {
   COMBAT_VERBS,

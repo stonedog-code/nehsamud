@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { deriveCharacter } from "@nehsamud/engine/character";
+import { CLASSES, RACES } from "@nehsamud/engine/catalog";
 
 /**
  * End-to-end coverage of the three modes and the creation flow.
@@ -56,8 +58,17 @@ test("creating a character and entering the world", async ({ page }) => {
   await page.getByRole("radio", { name: /Dwarf/ }).check();
   await page.getByRole("radio", { name: /Warrior/ }).check();
 
-  // 30 base + 4 dwarf + 6 warrior.
-  await expect(page.getByText("40", { exact: true })).toBeVisible();
+  // Derived from the engine rather than hardcoded, so this asserts the
+  // preview AGREES WITH THE SERVER rather than agreeing with a number
+  // someone typed. The previous version asserted a literal 40 against the
+  // app's own modifier table, which the engine never shared.
+  const dwarfWarrior = deriveCharacter(
+    RACES.find((r) => r.slug === "dwarf")!,
+    CLASSES.find((c) => c.slug === "warrior")!,
+  );
+  await expect(
+    page.getByText(String(dwarfWarrior.maxHp), { exact: true }),
+  ).toBeVisible();
 
   await page.getByLabel("Character name").fill("Aria");
   await page.getByRole("button", { name: "Enter the world" }).click();
@@ -71,6 +82,29 @@ test("creating a character and entering the world", async ({ page }) => {
     "Welcome, Aria the Dwarf Warrior.",
   );
   await expect(page.getByTestId("transcript")).toContainText("Town Square");
+});
+
+test("a tough build previews tougher than a frail one", async ({ page }) => {
+  // Deliberately NOT derived from the engine. The assertion above proves the
+  // preview AGREES with the engine, which is tautological about the values:
+  // make every modifier inert and both sides still agree, on 30 HP for
+  // everyone. This one compares two builds against each other, so it fails
+  // if the modifiers stop being applied at all — which is the bug (NEH-621).
+  await page.goto("/play/pve/create");
+
+  await page.getByRole("radio", { name: /Dwarf/ }).check();
+  await page.getByRole("radio", { name: /Warrior/ }).check();
+  const tough = Number(
+    await page.getByTestId("preview-hp").textContent(),
+  );
+
+  await page.getByRole("radio", { name: /Halfling/ }).check();
+  await page.getByRole("radio", { name: /Mage/ }).check();
+  const frail = Number(
+    await page.getByTestId("preview-hp").textContent(),
+  );
+
+  expect(tough).toBeGreaterThan(frail);
 });
 
 test("the chosen race and class reach the character sheet", async ({ page }) => {

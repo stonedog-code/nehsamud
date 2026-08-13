@@ -18,6 +18,14 @@
     "./modes": {
       "types": "./dist/game-mode.d.ts",
       "import": "./dist/game-mode.js"
+    },
+    "./character": {
+      "types": "./dist/character.d.ts",
+      "import": "./dist/character.js"
+    },
+    "./catalog": {
+      "types": "./dist/seed/fixtures/index.d.ts",
+      "import": "./dist/seed/fixtures/index.js"
     }
   },
   "bin": {

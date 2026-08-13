@@ -26,6 +26,7 @@ import { randomUUID } from "node:crypto";
 
 import type { PrismaClient } from "@nehsamud/engine-db";
 
+import { deriveCharacter } from "../character.js";
 import { levelForXp } from "../progression.js";
 import type { InventoryEntry, SessionState } from "../world/session.js";
 import { DEFAULT_MAX_HP } from "../world/session.js";
@@ -153,6 +154,17 @@ export async function loadPlayer(
   return row ? toRecord(row) : null;
 }
 
+/** The seven modifier columns, shared by the race and class lookups. */
+const MOD_SELECT = {
+  strengthMod: true,
+  intelligenceMod: true,
+  wisdomMod: true,
+  charismaMod: true,
+  constitutionMod: true,
+  dexterityMod: true,
+  luckMod: true,
+} as const;
+
 /** The race and class a player chose at creation. Both required. */
 export interface CharacterChoice {
   raceSlug: string;
@@ -220,7 +232,7 @@ export async function createPlayer(
   // the rows, so there is no default.
   const race = await prisma.mudRace.findUnique({
     where: { slug: choice.raceSlug },
-    select: { id: true, playable: true },
+    select: { id: true, playable: true, ...MOD_SELECT },
   });
   if (!race || !race.playable) {
     throw new Error(
@@ -229,13 +241,19 @@ export async function createPlayer(
   }
   const klass = await prisma.mudClass.findUnique({
     where: { slug: choice.classSlug },
-    select: { id: true, playable: true },
+    select: { id: true, playable: true, ...MOD_SELECT },
   });
   if (!klass || !klass.playable) {
     throw new Error(
       `createPlayer: "${choice.classSlug}" is not a playable class.`,
     );
   }
+  // The seven attribute columns were never written, so every player took
+  // the schema default of 10 across the board however they were built — and
+  // the modifier columns on race and class, seeded with real numbers, were
+  // read by nothing at all.
+  const { attributes, maxHp } = deriveCharacter(race, klass);
+
   const created = await prisma.mudPlayer.create({
     data: {
       userId,
@@ -243,8 +261,9 @@ export async function createPlayer(
       raceId: race.id,
       classId: klass.id,
       roomId: spawnRoomId,
-      currentHp: DEFAULT_MAX_HP,
-      maxHp: DEFAULT_MAX_HP,
+      ...attributes,
+      currentHp: maxHp,
+      maxHp,
       experience: 0,
       lastSeenAt: new Date(),
     },
