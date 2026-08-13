@@ -1,5 +1,9 @@
 /**
- * Townsmee room catalog. The playable map.
+ * Townsmee room catalog — the STARTING area, no longer the whole map.
+ *
+ * Exported as `TOWNSMEE_ROOMS`; the full map is assembled in `index.ts` from
+ * this plus the wilds and Barrowdeep. Keeping one file per area is what stops
+ * a 60-room fixture becoming a file nobody reads before editing.
  *
  * Ported from the original Python MUD (nehsa-net/websocket-mud), source_data/townsmee.py.
  * Focused-rewrite subset:
@@ -18,7 +22,7 @@
 
 import type { RoomFixture } from "./types.js";
 
-export const ROOMS: RoomFixture[] = [
+export const TOWNSMEE_ROOMS: RoomFixture[] = [
   /* ── Town centre ──────────────────────────────────────────── */
   {
     enumKey: "TOWNSMEE_TOWNSQUARE",
@@ -29,6 +33,7 @@ export const ROOMS: RoomFixture[] = [
       "to the area; people and wagons move with purpose in all directions. Roads lead north, south, " +
       "east and west.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       north: "TOWNSMEE_SUNROAD_NORTH1",
       south: "TOWNSMEE_SUNROAD_SOUTH1",
@@ -46,6 +51,7 @@ export const ROOMS: RoomFixture[] = [
       "of books, and a prized map of the town and surrounding area stands on display behind glass. " +
       "Stairs lead up; the door east returns to the moonroad.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       up: "TOWNSMEE_INN_SECOND",
       east: "TOWNSMEE_MOONROAD_WEST1",
@@ -57,6 +63,7 @@ export const ROOMS: RoomFixture[] = [
     description:
       "The second floor of the inn. Rooms line the hallway. Stairs go up and down.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       up: "TOWNSMEE_INN_THIRD",
       down: "TOWNSMEE_INN",
@@ -69,6 +76,7 @@ export const ROOMS: RoomFixture[] = [
       "The third floor of the inn. Rooms line the hallway. A beautiful vase with daisies sits on a " +
       "table in broad view.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       down: "TOWNSMEE_INN_SECOND",
     },
@@ -80,6 +88,7 @@ export const ROOMS: RoomFixture[] = [
       "Low-ceilinged, smelling of pipe smoke and stew. A long bar runs along the back wall and a " +
       "fire crackles in the hearth. The exit south returns to the sunroad.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       south: "TOWNSMEE_SUNROAD_NORTH1",
     },
@@ -92,6 +101,7 @@ export const ROOMS: RoomFixture[] = [
       "distraught woman is pleading and gesturing to someone through a small window into the back. " +
       "The exit west returns to the market plaza.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       west: "TOWNSMEE_MARKET",
     },
@@ -104,6 +114,7 @@ export const ROOMS: RoomFixture[] = [
       "leads into the back room; the front door goes south to the moonroad. A side gate opens " +
       "southeast onto the market stalls.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       north: "TOWNSMEE_BLACKSMITH_BACK",
       south: "TOWNSMEE_MOONROAD_EAST1",
@@ -120,6 +131,7 @@ export const ROOMS: RoomFixture[] = [
     description:
       "A hot forge still burns smoldering coals. The exit south returns to the front shop.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       south: "TOWNSMEE_BLACKSMITH",
     },
@@ -132,6 +144,7 @@ export const ROOMS: RoomFixture[] = [
       "nearest. The sheriff's office is east; the exit west returns to the moonroad, and a side " +
       "gate northwest cuts through to the blacksmith.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       west: "TOWNSMEE_MOONROAD_EAST1",
       east: "TOWNSMEE_SHERIFF",
@@ -145,6 +158,7 @@ export const ROOMS: RoomFixture[] = [
       "The town armoury — racks of practice weapons line one wall; a quartermaster's desk faces the " +
       "door. The exit south leads to the lower quarter.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       south: "TOWNSMEE_LOWER_QUARTER",
     },
@@ -156,6 +170,7 @@ export const ROOMS: RoomFixture[] = [
       "A grim platform with a single noose and a worn execution log nailed to the side. The exit " +
       "north returns to the southern sunroad.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       north: "TOWNSMEE_SUNROAD_SOUTH2",
     },
@@ -167,9 +182,11 @@ export const ROOMS: RoomFixture[] = [
       "A run-down district where the cobblestones turn to dirt. The smell of refuse hangs heavy. " +
       "The exit north leads to the armoury; the exit east leads back toward the mindroad bridge.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       north: "TOWNSMEE_ARMOURY",
       east: "TOWNSMEE_MINDROAD_BRIDGE",
+      west: "TOWNSMEE_TALENTROAD",
     },
   },
 
@@ -181,6 +198,7 @@ export const ROOMS: RoomFixture[] = [
       "You're on the sunroad, Townsmee's north-south thoroughfare. The street is broad enough for " +
       "two wagons to pass. Tavern signs creak overhead.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       north: "TOWNSMEE_TAVERN",
       south: "TOWNSMEE_TOWNSQUARE",
@@ -192,6 +210,7 @@ export const ROOMS: RoomFixture[] = [
     description:
       "The sunroad continues south. The crowd thins; the buildings turn quieter.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       north: "TOWNSMEE_TOWNSQUARE",
       south: "TOWNSMEE_SUNROAD_SOUTH2",
@@ -204,6 +223,7 @@ export const ROOMS: RoomFixture[] = [
       "Further south on the sunroad. The gallows loom to the south; the cross-street talentroad " +
       "branches east.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       north: "TOWNSMEE_SUNROAD_SOUTH1",
       south: "TOWNSMEE_GALLOWS",
@@ -218,6 +238,7 @@ export const ROOMS: RoomFixture[] = [
     description:
       "You're on the moonroad heading west. The inn's signboard hangs over the road just ahead.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       east: "TOWNSMEE_TOWNSQUARE",
       west: "TOWNSMEE_INN",
@@ -230,6 +251,7 @@ export const ROOMS: RoomFixture[] = [
       "You're on the moonroad heading east. The blacksmith's shop stands to the north; the market " +
       "and (beyond it) the sheriff's office lie east.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       west: "TOWNSMEE_TOWNSQUARE",
       east: "TOWNSMEE_MARKET",
@@ -243,10 +265,13 @@ export const ROOMS: RoomFixture[] = [
     name: "Mindroad Bridge",
     description:
       "A timber-and-iron bridge spans a slow brown river. The bridgeposts are carved with old runes " +
-      "that have weathered into shapes you can't quite read. West leads to the lower quarter.",
+      "that have weathered into shapes you can't quite read. West leads to the lower quarter; the " +
+      "far bank east is open country.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       west: "TOWNSMEE_LOWER_QUARTER",
+      east: "WILDS_EASTBANK",
     },
   },
   {
@@ -254,10 +279,18 @@ export const ROOMS: RoomFixture[] = [
     name: "Talentroad",
     description:
       "A narrow side street lined with craftsman's workshops, mostly shuttered at this hour. The " +
-      "exit west returns to the sunroad.",
+      "exit west returns to the sunroad; east the street drops into the lower quarter.",
     environment: "townsmee",
+    area: "townsmee",
     exits: {
       west: "TOWNSMEE_SUNROAD_SOUTH2",
+      // Without this the lower quarter, the armoury and the bridge were an
+      // ISLAND: internally consistent, reciprocal in every direction, and
+      // unreachable from the town square. The monster-spawn fixture even
+      // described walking here "from the square via the sunroad →
+      // talentroad → ... sequence" — a route that did not exist, so the
+      // goblin the demo flow relies on sat in a room no player could get to.
+      east: "TOWNSMEE_LOWER_QUARTER",
     },
   },
 ];

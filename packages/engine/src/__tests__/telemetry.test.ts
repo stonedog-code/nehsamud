@@ -41,6 +41,7 @@ function buildWorld(): WorldState {
     description: "A modest square at the heart of Townsmee.",
     exits: { north: "room-inn" },
     environment: "townsmee",
+    area: "townsmee",
     imageName: null,
   };
   const w = new WorldState();

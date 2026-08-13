@@ -36,6 +36,7 @@ function buildWorld(): WorldState {
     description: "Cobbles.",
     exits: {},
     environment: null,
+    area: "townsmee",
     imageName: null,
   };
   const inn: CachedRoom = {
@@ -45,6 +46,7 @@ function buildWorld(): WorldState {
     description: "Fire.",
     exits: {},
     environment: null,
+    area: "townsmee",
     imageName: "room-inn.png", // already rendered
   };
   const w = new WorldState();

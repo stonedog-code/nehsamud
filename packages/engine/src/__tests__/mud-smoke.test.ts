@@ -64,6 +64,7 @@ const ROOM_SQUARE: CachedRoom = {
   description: "Cobbled square with a fountain.",
   exits: { north: "room-inn", south: "room-lower" },
   environment: "townsmee",
+  area: "townsmee",
   imageName: null,
 };
 const ROOM_INN: CachedRoom = {
@@ -73,6 +74,7 @@ const ROOM_INN: CachedRoom = {
   description: "Warm fireplace.",
   exits: { south: "room-square" },
   environment: "townsmee",
+  area: "townsmee",
   imageName: null,
 };
 const ROOM_LOWER: CachedRoom = {
@@ -82,6 +84,7 @@ const ROOM_LOWER: CachedRoom = {
   description: "Run-down district.",
   exits: { north: "room-square" },
   environment: "townsmee",
+  area: "townsmee",
   imageName: null,
 };
 const NPC_ZOFIA: CachedNpc = {

@@ -22,6 +22,7 @@ const SQUARE: CachedRoom = {
   description: "A square.",
   exits: { north: "room-inn" },
   environment: "townsmee",
+  area: "townsmee",
   imageName: null,
 };
 const INN: CachedRoom = {
@@ -31,6 +32,7 @@ const INN: CachedRoom = {
   description: "Warm.",
   exits: { south: "room-square" },
   environment: "townsmee",
+  area: "townsmee",
   imageName: null,
 };
 const CELLAR: CachedRoom = {
@@ -40,6 +42,7 @@ const CELLAR: CachedRoom = {
   description: "Cold.",
   exits: {},
   environment: "townsmee",
+  area: "townsmee",
   imageName: null,
 };
 

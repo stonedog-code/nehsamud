@@ -180,6 +180,12 @@ model MudRoom {
   /// a separate `environments` table in the Python schema; collapsed
   /// to a denormalized column for the focused rewrite — the table
   /// only ever held ~10 rows used for ambient-event selection.
+  /// Region this room belongs to (`AreaFixture.key`), e.g. "townsmee".
+  ///
+  /// Distinct from `environment`, which is a per-room art hint: two rooms in
+  /// one area can look nothing alike. Defaulted so the column is additive
+  /// over rooms seeded before areas existed.
+  area        String   @default("townsmee") @db.VarChar(64)
   environment String?  @db.VarChar(50)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")

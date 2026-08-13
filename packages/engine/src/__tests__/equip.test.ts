@@ -27,6 +27,7 @@ const SQUARE: CachedRoom = {
   description: "A modest square.",
   exits: {},
   environment: "townsmee",
+  area: "townsmee",
   imageName: null,
 };
 

@@ -34,6 +34,7 @@ function buildWorld(): WorldState {
     description: "Cobbled square with a fountain.",
     exits: { north: "room-inn" },
     environment: "townsmee",
+    area: "townsmee",
     imageName: null,
   };
   const inn: CachedRoom = {
@@ -43,6 +44,7 @@ function buildWorld(): WorldState {
     description: "Warm fireplace.",
     exits: { south: "room-square" },
     environment: "townsmee",
+    area: "townsmee",
     imageName: null,
   };
   const zofia: CachedNpc = {
