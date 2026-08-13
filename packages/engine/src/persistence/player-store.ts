@@ -26,6 +26,7 @@ import { randomUUID } from "node:crypto";
 
 import type { PrismaClient } from "@nehsamud/engine-db";
 
+import { levelForXp } from "../progression.js";
 import type { SessionState } from "../world/session.js";
 import { DEFAULT_MAX_HP } from "../world/session.js";
 
@@ -169,7 +170,8 @@ export async function savePlayerState(
   session: Pick<
     SessionState,
     "currentRoomId" | "currentHp" | "maxHp" | "experience"
-  >,
+  > &
+    Partial<Pick<SessionState, "level">>,
 ): Promise<void> {
   await prisma.mudPlayer.update({
     where: { id: playerId },
@@ -178,6 +180,11 @@ export async function savePlayerState(
       currentHp: session.currentHp,
       maxHp: session.maxHp,
       experience: session.experience,
+      // Derived from experience rather than taken from the session, so the
+      // column can never be written inconsistent with the XP beside it — the
+      // level is a cache and this is where it gets refreshed. `level` on the
+      // session is optional here only so older callers keep compiling.
+      level: levelForXp(session.experience),
       lastSeenAt: new Date(),
     },
   });

@@ -49,6 +49,7 @@ import {
   savePlayerState,
 } from "./persistence/player-store.js";
 import { RoomArtGenerator } from "./persistence/room-art-generator.js";
+import { levelForXp } from "./progression.js";
 import { SessionRegistry } from "./world/session.js";
 import type { WorldState } from "./world/world-state.js";
 
@@ -327,6 +328,11 @@ export class MudWsServer {
     if (persisted?.startingHp !== undefined) session.currentHp = persisted.startingHp;
     if (persisted?.startingMaxHp !== undefined) session.maxHp = persisted.startingMaxHp;
     if (persisted?.startingXp !== undefined) session.experience = persisted.startingXp;
+    // Derived, never read from the stored `level` column. That column is a
+    // cache refreshed on save; the experience is the fact. Recomputing here
+    // means a row whose level drifted — a lost write, a hand edit — corrects
+    // itself on the next login instead of persisting the disagreement.
+    session.level = levelForXp(session.experience);
     if (session.currentHp === 0) session.defeated = true;
 
     if (this.prisma) {

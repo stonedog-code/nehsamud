@@ -6,6 +6,11 @@
 
 import { dispatch } from "../commands/dispatch.js";
 import { PLAYER_BASE_DAMAGE } from "../commands/handlers/attack.js";
+import {
+  HP_PER_LEVEL,
+  levelForXp,
+  xpForLevel,
+} from "../progression.js";
 import { parseCommand } from "../commands/parser.js";
 import { DEFAULT_MAX_HP } from "../world/session.js";
 import type { SessionState } from "../world/session.js";
@@ -72,6 +77,7 @@ function newSession(roomId: string): SessionState {
     currentHp: DEFAULT_MAX_HP,
     maxHp: DEFAULT_MAX_HP,
     experience: 0,
+    level: 1,
     defeated: false,
   };
 }
@@ -254,5 +260,87 @@ describe("look — monster line", () => {
       command: parseCommand("look"),
     })).response.lines;
     expect(lines.find((l) => l.startsWith("Monsters here"))).toBeUndefined();
+  });
+});
+
+/* ── Levelling ────────────────────────────────────────────────────
+ *
+ * This is what NEH-619 actually turned out to be about. The issue was filed
+ * claiming experience was in-memory only; it was not — `savePlayerState` had
+ * been writing it and `startSessionAndAutoLook` reloading it all along. What
+ * was genuinely missing was every part of LEVELLING: no curve, no level-up,
+ * and the `level` column pinned at 1 no matter how much XP a character had.
+ *
+ * So these are the regression tests. The XP-persistence test in the smoke
+ * suite pins behaviour that already worked; these pin behaviour that did not
+ * exist.
+ */
+describe("levelling on a kill", () => {
+  it("levels the character up when the award crosses a threshold", async () => {
+    const world = buildWorld();
+    const goblin = world.spawnMonster("goblin", "room-lower");
+    const session = newSession("room-lower");
+    // One goblin short of level 2.
+    session.experience = xpForLevel(2) - goblin.experience;
+
+    // Two swings: PLAYER_BASE_DAMAGE=5 against this goblin's baseHp=8.
+    await dispatch({ world, session, command: parseCommand("attack goblin") });
+    const lines = (await dispatch({
+      world,
+      session,
+      command: parseCommand("attack goblin"),
+    })).response.lines;
+
+    expect(session.level).toBe(2);
+    expect(lines.some((l) => l.includes("reached level 2"))).toBe(true);
+    expect(lines.some((l) => l.includes("Maximum health is now"))).toBe(true);
+  });
+
+  it("raises current HP with max HP, so levelling is not a penalty", async () => {
+    const world = buildWorld();
+    const goblin = world.spawnMonster("goblin", "room-lower");
+    const session = newSession("room-lower");
+    session.experience = xpForLevel(2) - goblin.experience;
+    session.currentHp = 40; // survives the counter-attack; HP checked below
+
+    await dispatch({ world, session, command: parseCommand("attack goblin") });
+    const hpBeforeKill = session.currentHp;
+    await dispatch({ world, session, command: parseCommand("attack goblin") });
+
+    expect(session.maxHp).toBe(DEFAULT_MAX_HP + HP_PER_LEVEL);
+    // The killing blow takes no counter-attack, so the only change to current
+    // HP is the level-up grant.
+    expect(session.currentHp).toBe(hpBeforeKill + HP_PER_LEVEL);
+  });
+
+  it("says nothing about levelling on a kill that does not cross one", async () => {
+    const world = buildWorld();
+    world.spawnMonster("goblin", "room-lower");
+    const session = newSession("room-lower");
+
+    await dispatch({ world, session, command: parseCommand("attack goblin") });
+    const lines = (await dispatch({
+      world,
+      session,
+      command: parseCommand("attack goblin"),
+    })).response.lines;
+
+    expect(session.level).toBe(1);
+    expect(lines.some((l) => l.includes("reached level"))).toBe(false);
+    expect(session.maxHp).toBe(DEFAULT_MAX_HP);
+  });
+
+  it("keeps session.level consistent with session.experience", async () => {
+    // The invariant the whole design rests on: level is derived, never an
+    // independent counter that can drift from the XP beside it.
+    const world = buildWorld();
+    const session = newSession("room-lower");
+    for (let i = 0; i < 8; i += 1) {
+      world.spawnMonster("goblin", "room-lower");
+      await dispatch({ world, session, command: parseCommand("attack goblin") });
+      await dispatch({ world, session, command: parseCommand("attack goblin") });
+      await dispatch({ world, session, command: parseCommand("attack goblin") });
+      expect(session.level).toBe(levelForXp(session.experience));
+    }
   });
 });

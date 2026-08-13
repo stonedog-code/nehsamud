@@ -70,6 +70,7 @@ function sessionAt(roomId: string): SessionState {
     currentHp: 30,
     maxHp: 30,
     experience: 0,
+    level: 1,
     defeated: false,
   };
 }

@@ -177,6 +177,11 @@ function fakePrisma(): FakePrisma {
           if (typeof args.data.maxHp === "number") row.maxHp = args.data.maxHp;
           if (typeof args.data.experience === "number")
             row.experience = args.data.experience;
+          // Mirrors savePlayerState writing the derived level. Without this
+          // the fake would happily report XP surviving a reconnect while the
+          // level column silently never moved — the fake agreeing with a bug
+          // the real client would not have.
+          if (typeof args.data.level === "number") row.level = args.data.level;
           return row;
         }
       }
@@ -468,6 +473,47 @@ describe("smoke / 4: combat", () => {
     expect(row?.experience).toBe(20);
 
     client.close();
+  });
+
+  it("experience survives a disconnect and reconnect", async () => {
+    // The failure this whole feature exists to remove: experience used to be
+    // session-only, so every reconnect silently reset a character to zero and
+    // level 100 was unreachable by construction. Asserting the row is not
+    // enough — the point is what the NEXT session starts with.
+    const first = await openClient(booted.url);
+    await authAndCreate(first, "user-persist");
+
+    first.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "south" }));
+    await drainUntilSilent(first);
+    for (let i = 0; i < 3; i += 1) {
+      first.send(
+        JSON.stringify({ type: "CLIENT_MESSAGE", message: "attack goblin" }),
+      );
+      await drainUntilSilent(first);
+    }
+
+    const afterKill = booted.prisma._rows.get("user-persist");
+    expect(afterKill?.experience).toBe(20);
+
+    // Drop the socket entirely, then come back as the same user.
+    first.close();
+    await new Promise((r) => setTimeout(r, 50));
+
+    const second = await openClient(booted.url);
+    second.send(JSON.stringify({ type: "AUTH", token: token("user-persist") }));
+    await drainUntilSilent(second);
+
+    // `statistics` does not exist yet (NEH-625), so the durable evidence is
+    // the row the new session loaded from and wrote back — it would be reset
+    // to 0 if the session had started blank and then saved over it.
+    second.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "look" }));
+    await drainUntilSilent(second);
+
+    const afterReconnect = booted.prisma._rows.get("user-persist");
+    expect(afterReconnect?.experience).toBe(20);
+    expect(afterReconnect?.level).toBe(1);
+
+    second.close();
   });
 });
 
