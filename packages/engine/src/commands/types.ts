@@ -5,6 +5,7 @@
 import type { Tracer } from "@opentelemetry/api";
 
 import type { AiServices } from "../ai/factory.js";
+import type { Rng } from "../combat.js";
 import type { SessionState } from "../world/session.js";
 import type { WorldState } from "../world/world-state.js";
 import type { ParsedCommand } from "./parser.js";
@@ -27,6 +28,15 @@ export interface CommandContext {
    * dispatch.ts wraps each command in a span when a tracer is
    * provided. */
   tracer?: Tracer;
+  /**
+   * Optional source of randomness for handlers that roll — combat today.
+   *
+   * Injected rather than reached for so a test can pin an exact sequence and
+   * a reported fight is reproducible from its seed. When unset, the handler
+   * seeds from the clock, which is right for production and useless for
+   * assertions — which is exactly why tests must pass one.
+   */
+  rng?: Rng;
 }
 
 /**

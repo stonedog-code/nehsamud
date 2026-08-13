@@ -17,6 +17,7 @@ import {
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 
+import { createRng } from "../combat.js";
 import {
   NO_COMBAT_MESSAGE,
   dispatch,
@@ -279,8 +280,16 @@ describe("dispatch — combat in exploration", () => {
       world,
       session: sessionAt(SQUARE.id),
       command: parseCommand("attack goblin"),
+      // Seeded to land the blow. Unseeded, combat can miss and this would
+      // fail intermittently — while the subject here is mode gating, not the
+      // outcome of a swing.
+      rng: createRng(2),
     });
-    expect(result.response.lines.join(" ")).toMatch(/strike the goblin/);
+    const text = result.response.lines.join(" ");
+    expect(text).toMatch(/strike the goblin/);
+    // The assertion that actually belongs to this file: it resolved rather
+    // than being refused by the mode.
+    expect(text).not.toContain(NO_COMBAT_MESSAGE);
   });
 });
 

@@ -20,6 +20,12 @@
  */
 
 import {
+  createRng,
+  describeAttack,
+  resolveAttack,
+  type Combatant,
+} from "../../combat.js";
+import {
   MAX_LEVEL,
   awardExperience,
   xpToNextLevel,
@@ -27,11 +33,21 @@ import {
 import type { CommandHandler } from "../types.js";
 import { reply } from "../types.js";
 
-/** Single-swing damage the player deals. Phase 7 replaces this
- * with weapon baseValue + class strengthMod. */
+/**
+ * Unarmed damage before weapon, level scaling and variance.
+ *
+ * Still a constant, but it is now the *floor* of a roll rather than the whole
+ * answer — the resolver adds level scaling, the weapon, and a spread. Kept
+ * exported because tests and balance work both want it named.
+ */
 export const PLAYER_BASE_DAMAGE = 5;
 
-export const attackHandler: CommandHandler = ({ world, session, command }) => {
+export const attackHandler: CommandHandler = ({
+  world,
+  session,
+  command,
+  rng,
+}) => {
   if (session.defeated) {
     return reply(
       "You're on the ground. Try `look` to recover and respawn at the town square.",
@@ -48,12 +64,36 @@ export const attackHandler: CommandHandler = ({ world, session, command }) => {
 
   const lines: string[] = [];
 
+  // One RNG for the whole round, so the player's swing and the counter-attack
+  // draw from the same sequence — two independent generators would make a
+  // seeded test assert against an order that does not exist in production.
+  const roll = rng ?? createRng(Date.now());
+
+  const player: Combatant = {
+    name: "you",
+    level: session.level,
+    baseDamage: PLAYER_BASE_DAMAGE,
+    // Weapon and armour are absent until equipment lands (NEH-625). The
+    // resolver already accepts them, so that is a wiring change rather than
+    // a formula change.
+  };
+  const foe: Combatant = {
+    name: monster.name,
+    level: 1,
+    baseDamage: monster.baseDamage,
+  };
+
   // 1. Player swing.
-  const remainingHp = world.damageMonster(monster.instanceId, PLAYER_BASE_DAMAGE);
+  const swing = resolveAttack(player, foe, roll);
+  const remainingHp = swing.hit
+    ? world.damageMonster(monster.instanceId, swing.damage)
+    : monster.currentHp;
   lines.push(
-    `You strike the ${monster.name} for ${PLAYER_BASE_DAMAGE} damage.`,
+    describeAttack("You", `the ${monster.name}`, swing, {
+      secondPerson: true,
+    }),
   );
-  if (remainingHp === 0) {
+  if (swing.hit && remainingHp === 0) {
     const award = awardExperience(session.experience, monster.experience);
     session.experience = award.experience;
     session.level = award.level;
@@ -87,11 +127,13 @@ export const attackHandler: CommandHandler = ({ world, session, command }) => {
   }
   lines.push(`The ${monster.name} has ${remainingHp}/${monster.maxHp} HP left.`);
 
-  // 2. Monster counter-attack.
-  const incoming = monster.baseDamage;
-  session.currentHp = Math.max(0, session.currentHp - incoming);
+  // 2. Counter-attack, resolved by the same rules and the same RNG.
+  const counter = resolveAttack(foe, player, roll);
+  session.currentHp = Math.max(0, session.currentHp - counter.damage);
   lines.push(
-    `The ${monster.name} hits you for ${incoming} damage. (${session.currentHp}/${session.maxHp} HP.)`,
+    counter.hit
+      ? `${describeAttack(`The ${monster.name}`, "you", counter)} (${session.currentHp}/${session.maxHp} HP.)`
+      : `The ${monster.name} swings at you and misses.`,
   );
   if (session.currentHp === 0) {
     session.defeated = true;
