@@ -108,6 +108,29 @@ export {
   type VerifyOptions,
 } from "./auth.js";
 
+/* ── Scripting ────────────────────────────────────────────────── */
+/**
+ * The player scripting language (R20–R24).
+ *
+ * Exported from the root because WHERE IT RUNS IS STILL OPEN (OQ1): a
+ * client driving the runner over the WebSocket and the engine driving it
+ * in-process are the same loop, so both need to reach it. The language does
+ * not change either way.
+ */
+export {
+  DEFAULT_LIMITS,
+  STOP_MESSAGES,
+  ScriptRunner,
+  ScriptSyntaxError,
+  parseScript,
+  type Program,
+  type ScriptLimits,
+  type ScriptState,
+  type Statement,
+  type Step,
+  type StopReason,
+} from "./scripting/index.js";
+
 /* ── Services ─────────────────────────────────────────────────── */
 export { createAiServices, type AiServices } from "./ai/factory.js";
 export { currentCapabilities, type Capabilities } from "./capabilities.js";
