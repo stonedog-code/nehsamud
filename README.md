@@ -56,6 +56,29 @@ Two environment variables, deliberately distinct:
 | `MUD_GAME_MODE` | the engine | the **one** mode this engine process runs. Unset → `exploration`. An unrecognised value fails the boot. |
 | `NEHSAMUD_MODES` | the app | which modes this front end offers, comma-separated. Unset → all three (the dev site). |
 
+### Operators
+
+`MUD_OPERATOR_IDS` — a comma-separated list of **owner ids** (the JWT `sub`,
+the same value `mud.player.ownerId` stores) permitted to run operator verbs.
+Unset means the world has no operators, which is the default and the safe
+one: nothing here ever falls back to granting authority.
+
+Operator verbs are absent from the command table for everyone else, so a
+player who tries one is told the verb does not exist rather than that they
+may not use it — knowing an operator verb exists is itself information.
+`help` hides them the same way.
+
+Authority is deliberately deployment config rather than a database flag or a
+JWT claim: it belongs to a *person* rather than a character, it must not be
+whatever the wrapping app decided to mint, and revoking it should be a
+redeploy rather than a migration. The cost is that granting it needs a
+deploy — which at this scale means the grant is reviewable, and there is no
+in-game path to acquiring it.
+
+| Verb | Does |
+|---|---|
+| `system <message>` | announce to every connected player, in every room |
+
 ## Running it
 
 The app alone, against the in-browser preview world — no database needed:

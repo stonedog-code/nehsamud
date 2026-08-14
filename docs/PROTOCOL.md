@@ -21,6 +21,14 @@ handshake beyond the frames below.
 ws://<host>:22009          # default; MUD_WS_PORT
 ```
 
+### Verbs you may not see
+
+Some verbs exist only for operators of a world, and are **absent** from the
+command table for everyone else — an unauthorised client is told the verb is
+unknown, not that it is forbidden. `help` lists them on the same basis. A
+third-party client should therefore treat `help` as the authority on what it
+may offer, rather than shipping a fixed command list.
+
 There is also a plain HTTP port (`MUD_HTTP_PORT`, default 22010) serving
 `/health`, `/metrics`, `/capabilities` and `/character-options`. None is
 needed to play, but the last one is how a picker UI learns what a character

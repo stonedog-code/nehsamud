@@ -36,6 +36,7 @@ import {
   restHandler,
   statisticsHandler,
 } from "./handlers/status.js";
+import { systemHandler } from "./handlers/system.js";
 import { talkHandler } from "./handlers/talk.js";
 import type {
   CommandContext,
@@ -86,6 +87,18 @@ const LOOTING_HANDLERS: Record<string, CommandHandler> = {
 };
 
 /**
+ * Verbs only an operator has.
+ *
+ * Merged into the table only for an operator, which is deliberately stronger
+ * than checking inside the handler: a non-operator does not get "you are not
+ * allowed", they get the ordinary unknown-verb reply, because knowing the
+ * verb exists is itself information (NEH-656).
+ */
+const OPERATOR_HANDLERS: Record<string, CommandHandler> = {
+  system: systemHandler,
+};
+
+/**
  * The handler table for a mode.
  *
  * Built per call rather than cached: a world's mode is fixed for the
@@ -95,11 +108,13 @@ const LOOTING_HANDLERS: Record<string, CommandHandler> = {
  */
 export function handlersFor(
   capabilities: { combat: boolean; looting?: boolean },
+  isOperator = false,
 ): Record<string, CommandHandler> {
   return {
     ...BASE_HANDLERS,
     ...(capabilities.combat ? COMBAT_HANDLERS : {}),
     ...(capabilities.looting ? LOOTING_HANDLERS : {}),
+    ...(isOperator ? OPERATOR_HANDLERS : {}),
   };
 }
 
@@ -160,7 +175,7 @@ export async function dispatch(ctx: CommandContext): Promise<DispatchResult> {
     return { response: reply(NO_LOOTING_MESSAGE), closeSocket: false };
   }
 
-  const handler = handlersFor(capabilities)[verb];
+  const handler = handlersFor(capabilities, ctx.isOperator === true)[verb];
   if (!handler) {
     return {
       response: reply(
