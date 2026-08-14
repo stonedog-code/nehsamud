@@ -13,6 +13,7 @@
  * asserts on what Postgres now contains.
  */
 
+import { RESPAWN_DELAY_MS } from "../world/world-state.js";
 import {
   bootEngine,
   Client,
@@ -290,5 +291,72 @@ describe("playing, and coming back", () => {
     expect(carried.map((c) => c.item.name)).toContain(stack!.item.name);
 
     walker.close();
+  });
+});
+
+describe("respawn, through a real socket", () => {
+  it("tells a player standing there that something came back", async () => {
+    // The unit tests cover the refill arithmetic. What they cannot see is
+    // whether the SERVER ever asks — respawn is evaluated when a player
+    // acts, so a working WorldState wired to nothing would pass every one
+    // of them and leave a permanently empty world in production.
+    let clock = 5_000_000;
+    const engine = await bootEngine(undefined, () => clock);
+    try {
+      const owner = newOwnerId();
+      const choices = Object.fromEntries(
+        (
+          await engine.prisma.mudCharacterOptionGroup.findMany({
+            orderBy: [{ position: "asc" }, { key: "asc" }],
+            select: {
+              key: true,
+              options: {
+                where: { selectable: true },
+                orderBy: { name: "asc" },
+                select: { slug: true },
+                take: 1,
+              },
+            },
+          })
+        ).flatMap((g) => (g.options[0] ? [[g.key, g.options[0].slug]] : [])),
+      );
+
+      const client = await Client.open(engine.url);
+      await client.auth(owner);
+      await client.exchange({
+        type: "CREATE_CHARACTER",
+        name: `Waiting-${owner.slice(0, 8)}`,
+        options: choices,
+      });
+
+      // Put something in the room the player is standing in, then kill it.
+      const row = await engine.prisma.mudPlayer.findFirstOrThrow({
+        where: { ownerId: owner },
+        select: { roomId: true },
+      });
+      const slug = (
+        await engine.prisma.mudHostile.findFirstOrThrow({
+          select: { slug: true },
+        })
+      ).slug;
+      const spawned = engine.world.registerSpawnPoint(slug, row.roomId!)!;
+      engine.world.damageHostile(spawned.instanceId, 99_999);
+      expect(engine.world.getHostilesInRoom(row.roomId!)).toHaveLength(0);
+
+      // A command before the delay must not bring it back.
+      clock += RESPAWN_DELAY_MS - 1;
+      const early = await client.type("look");
+      expect(early.join("\n")).not.toContain("appears.");
+
+      // And after it, the player is told rather than left to re-`look`.
+      clock += 1;
+      const later = await client.type("look");
+      expect(later.join("\n")).toContain("appears.");
+      expect(engine.world.getHostilesInRoom(row.roomId!)).toHaveLength(1);
+
+      client.close();
+    } finally {
+      await engine.close();
+    }
   });
 });

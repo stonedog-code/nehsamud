@@ -124,6 +124,32 @@ export interface RoomItemStack {
   hidden: boolean;
 }
 
+/**
+ * How long a defeated hostile stays gone before its spawn point refills.
+ *
+ * Long enough that clearing a room means something for a while, short enough
+ * that a player who walks a loop finds the world alive again rather than
+ * strip-mined. Levelling needs SOMETHING to fight repeatedly — a world that
+ * empties permanently cannot support progression at any size (NEH-664).
+ */
+export const RESPAWN_DELAY_MS = 90_000;
+
+/**
+ * A place in the world that holds one hostile, and refills after a delay.
+ *
+ * The fixtures declared these all along; the engine just spawned from them
+ * once at boot and forgot where they came from, so a kill was permanent.
+ * Keeping the point means the world knows what belongs where.
+ */
+interface SpawnPoint {
+  slug: string;
+  roomId: string;
+  /** The live instance standing here, when there is one. */
+  instanceId?: string;
+  /** When this point may refill. Undefined while it is occupied. */
+  respawnAt?: number;
+}
+
 export class WorldState {
   /**
    * The mode this world runs in. Set once at construction and never
@@ -134,8 +160,20 @@ export class WorldState {
    */
   readonly mode: GameMode;
 
-  constructor(mode: GameMode = DEFAULT_GAME_MODE) {
+  /**
+   * Source of the current time, injected.
+   *
+   * Respawn is evaluated when a player types something, not on a background
+   * timer — the same choice `rest` makes, and for the same reason: a
+   * command's effect stays a pure function of the state it was given, so a
+   * test can assert respawn without waiting ninety seconds or mocking
+   * globals. Production passes nothing and gets the clock.
+   */
+  private readonly now: () => number;
+
+  constructor(mode: GameMode = DEFAULT_GAME_MODE, now: () => number = Date.now) {
     this.mode = mode;
+    this.now = now;
   }
 
   /** What this world permits. Derived from {@link mode}. */
@@ -155,6 +193,8 @@ export class WorldState {
   /** Index of live instances per roomId for fast `look` rendering. */
   private hostilesByRoomId = new Map<string, HostileInstance[]>();
   private nextHostileInstanceCounter = 0;
+  /** Declared places a hostile belongs, and when each may refill. */
+  private spawnPoints: SpawnPoint[] = [];
   private items = new Map<string, CachedItem>();
   /** Items lying on the floor, per room. Mutable: `get` and `drop` move
    * stacks between here and a player's inventory. */
@@ -272,6 +312,10 @@ export class WorldState {
     this.hostileInstances.clear();
     this.hostilesByRoomId.clear();
     this.nextHostileInstanceCounter = 0;
+    // Spawn points go with them: they are re-registered from the pack by
+    // whoever boots the world, so keeping stale ones would refill rooms
+    // that may no longer exist.
+    this.spawnPoints = [];
 
     const itemRows = await prisma.mudItem.findMany({
       select: {
@@ -327,6 +371,7 @@ export class WorldState {
     this.hostileInstances.clear();
     this.hostilesByRoomId.clear();
     this.nextHostileInstanceCounter = 0;
+    this.spawnPoints = [];
     this.items.clear();
     this.roomItems.clear();
     for (const i of items) this.items.set(i.id, i);
@@ -619,6 +664,14 @@ export class WorldState {
   despawnHostile(instanceId: string): void {
     const instance = this.hostileInstances.get(instanceId);
     if (!instance) return;
+    // Free the point this instance was standing in and start its clock. A
+    // hostile spawned outside any declared point (a test, a future summon)
+    // simply has none, and nothing refills.
+    const point = this.spawnPoints.find((p) => p.instanceId === instanceId);
+    if (point) {
+      delete point.instanceId;
+      point.respawnAt = this.now() + RESPAWN_DELAY_MS;
+    }
     this.hostileInstances.delete(instanceId);
     const list = this.hostilesByRoomId.get(instance.roomId);
     if (list) {
@@ -642,5 +695,58 @@ export class WorldState {
 
   liveHostileCount(): number {
     return this.hostileInstances.size;
+  }
+
+  /* ─── Spawn points and respawn ─────────────────────────────── */
+
+  /**
+   * Declare that a hostile belongs here, and put one there now.
+   *
+   * Replaces calling `spawnHostile` directly from the boot loop, which
+   * spawned from the fixtures and then forgot where they came from — so the
+   * first kill emptied that place permanently and the world only ever got
+   * quieter. Returns the instance, or undefined in a world with no hostiles.
+   */
+  registerSpawnPoint(slug: string, roomId: string): HostileInstance | undefined {
+    if (!this.capabilities.hostiles) return undefined;
+    const instance = this.spawnHostile(slug, roomId);
+    this.spawnPoints.push({ slug, roomId, instanceId: instance.instanceId });
+    return instance;
+  }
+
+  spawnPointCount(): number {
+    return this.spawnPoints.length;
+  }
+
+  /**
+   * Refill every spawn point whose delay has elapsed. Returns what came back.
+   *
+   * Called when a player acts, never on a timer. That keeps the engine's
+   * most testable property intact — a command's effect is a function of the
+   * state it was given — and means an idle world costs nothing.
+   *
+   * The consequence worth naming: time only advances for a world somebody
+   * is playing. A server left alone for an hour refills on the first command
+   * after it, not during the silence. For a respawn that is the behaviour
+   * you want anyway; nobody was there to miss it.
+   */
+  respawnDue(): HostileInstance[] {
+    if (!this.capabilities.hostiles) return [];
+    const now = this.now();
+    const returned: HostileInstance[] = [];
+    for (const point of this.spawnPoints) {
+      if (point.instanceId !== undefined) continue;
+      if (point.respawnAt === undefined || point.respawnAt > now) continue;
+      // A room or catalog entry can vanish under a point when the seed
+      // prunes content. Skip rather than throw: a world missing one wolf is
+      // better than a dispatch that dies mid-command.
+      if (!this.rooms.has(point.roomId)) continue;
+      if (!this.hostilesBySlug.has(point.slug)) continue;
+      const instance = this.spawnHostile(point.slug, point.roomId);
+      point.instanceId = instance.instanceId;
+      delete point.respawnAt;
+      returned.push(instance);
+    }
+    return returned;
   }
 }

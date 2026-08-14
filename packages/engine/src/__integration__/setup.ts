@@ -13,7 +13,24 @@
 
 const REQUIRED = "MUD_DATABASE_URL";
 
+/**
+ * The secret both sides of auth must agree on.
+ *
+ * Set here rather than defaulted in the harness alone. The harness signs
+ * tokens and the engine's `verifyHopperToken` reads `process.env.JWT_SECRET`
+ * to check them — so a harness-side default with no matching engine-side one
+ * meant that running the tier without exporting it produced a socket that
+ * authenticated against nothing, created no character, and failed six tests
+ * with "expected Welcome…, received empty string". Nothing anywhere said
+ * "auth failed".
+ *
+ * An explicitly-set value is respected; this only fills the gap.
+ */
+const AUTH_SECRET = "integration-secret";
+
 beforeAll(() => {
+  process.env.JWT_SECRET ??= AUTH_SECRET;
+
   if (!process.env[REQUIRED]?.trim()) {
     throw new Error(
       `${REQUIRED} is not set, so the integration tier has no database to run against.\n\n` +
