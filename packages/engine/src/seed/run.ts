@@ -35,6 +35,33 @@ async function main(): Promise<void> {
     console.log(`✓ placed=${counts.placements}`);
     console.log(`✓ monsters=${counts.monsters}`);
     console.log(`✓ npcs=${counts.npcs}`);
+
+    // Everything removed is named. A seed that silently deletes content is
+    // as bad as one that silently keeps it, and a relocated player is
+    // something an operator should hear about here rather than from a
+    // support ticket.
+    const { pruned } = counts;
+    const removals: Array<[string, string[]]> = [
+      ["rooms", pruned.rooms],
+      ["npcs", pruned.npcs],
+      ["items", pruned.items],
+      ["monsters", pruned.monsters],
+      ["races", pruned.races],
+      ["classes", pruned.classes],
+    ];
+    const removed = removals.filter(([, keys]) => keys.length > 0);
+    if (removed.length === 0) {
+      console.log("✓ pruned nothing — the catalog already matched the fixtures");
+    } else {
+      for (const [label, keys] of removed) {
+        console.log(`✂ pruned ${keys.length} ${label}: ${keys.join(", ")}`);
+      }
+    }
+    if (pruned.playersRelocated > 0) {
+      console.log(
+        `↪ moved ${pruned.playersRelocated} player(s) to the spawn: the room they were standing in no longer exists`,
+      );
+    }
   } finally {
     await prisma.$disconnect();
   }

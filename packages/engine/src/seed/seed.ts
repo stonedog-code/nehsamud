@@ -37,6 +37,26 @@ export interface SeedResult {
   placements: number;
   monsters: number;
   npcs: number;
+  /** Catalog rows removed because no fixture declares them any more. */
+  pruned: PruneResult;
+}
+
+/**
+ * What the prune removed, and what it had to move out of the way first.
+ *
+ * Reported rather than silent: a seed that quietly deletes content is as bad
+ * as one that quietly keeps it, and "we relocated three of your players" is
+ * not a thing to discover from a support ticket.
+ */
+export interface PruneResult {
+  rooms: string[];
+  npcs: string[];
+  items: string[];
+  monsters: string[];
+  races: string[];
+  classes: string[];
+  /** Players moved to the spawn because the room under them was removed. */
+  playersRelocated: number;
 }
 
 export async function seedCatalog(prisma: PrismaClient): Promise<SeedResult> {
@@ -50,7 +70,11 @@ export async function seedCatalog(prisma: PrismaClient): Promise<SeedResult> {
   const placements = await seedItemPlacements(prisma);
   const monsters = await seedMonsters(prisma);
   const npcs = await seedNpcs(prisma);
-  return { races, classes, rooms, items, placements, monsters, npcs };
+  // Last, so everything the fixtures DO declare is already present — the
+  // prune can then treat "absent from the fixtures" as "absent from the
+  // database" without racing its own upserts.
+  const pruned = await pruneCatalog(prisma);
+  return { races, classes, rooms, items, placements, monsters, npcs, pruned };
 }
 
 async function seedRaces(prisma: PrismaClient): Promise<number> {
@@ -286,4 +310,171 @@ async function seedNpcs(prisma: PrismaClient): Promise<number> {
     });
   }
   return NPCS.length;
+}
+
+/**
+ * The room a displaced player is put back into.
+ *
+ * Mirrors ws-server's default. A pack-supplied spawn (PRD-0002 phase 2) will
+ * replace both with one value read from the pack.
+ */
+const SPAWN_ROOM_ENUM_KEY = "TOWNSMEE_TOWNSQUARE";
+
+/**
+ * Remove catalog rows the fixtures no longer declare.
+ *
+ * WHY THIS EXISTS. The seeder was upsert-only, and its header explained
+ * why: the Python version truncated and reinserted on every boot, which
+ * would orphan inventory and mid-run player positions. That reasoning is
+ * right about PLAYER-owned data and wrong about the catalog — nothing ever
+ * removed a row whose fixture had been deleted, so every fixture ever
+ * seeded was still in the database.
+ *
+ * Measured on dev after a clean seed: the seeder reported 39 rooms and 10
+ * NPCs; the database held 42 and 20. The engine loads its world from
+ * Postgres, so it was serving rooms and NPCs nobody had authored — and the
+ * map tests assert over the FIXTURES, so they proved nothing about any of
+ * it. An orphan room can be an unreachable island with exits into deleted
+ * rooms and every test stays green.
+ *
+ * WHAT IT REFUSES TO DO. Deleting catalog rows can destroy things players
+ * own, so this is deliberately timid:
+ *
+ *   - An item any player is CARRYING is never pruned. That is somebody's
+ *     property; a fixture deletion that would take it is reported and
+ *     skipped rather than cascaded. The loud failure is the point.
+ *   - A race or class any character was BUILT FROM is never pruned. The row
+ *     is the only record of what that character is.
+ *   - A room with players standing in it is pruned, but they are moved to
+ *     the spawn first. Leaving them would be a foreign-key error at seed
+ *     time; deleting them is not on the table.
+ */
+export async function pruneCatalog(
+  prisma: PrismaClient,
+): Promise<PruneResult> {
+  const result: PruneResult = {
+    rooms: [],
+    npcs: [],
+    items: [],
+    monsters: [],
+    races: [],
+    classes: [],
+    playersRelocated: 0,
+  };
+
+  /* ── Things nothing else depends on ─────────────────────────── */
+
+  const monsterSlugs = new Set(MONSTERS.map((m) => m.slug));
+  const staleMonsters = (
+    await prisma.mudMonster.findMany({ select: { id: true, slug: true } })
+  ).filter((m) => !monsterSlugs.has(m.slug));
+  if (staleMonsters.length > 0) {
+    // Monster instances live in memory, so the catalog row has no dependants.
+    await prisma.mudMonster.deleteMany({
+      where: { id: { in: staleMonsters.map((m) => m.id) } },
+    });
+    result.monsters = staleMonsters.map((m) => m.slug);
+  }
+
+  const npcSlugs = new Set(NPCS.map((n) => n.slug));
+  const staleNpcs = (
+    await prisma.mudNpc.findMany({ select: { id: true, slug: true } })
+  ).filter((n) => !npcSlugs.has(n.slug));
+  if (staleNpcs.length > 0) {
+    await prisma.mudNpc.deleteMany({
+      where: { id: { in: staleNpcs.map((n) => n.id) } },
+    });
+    result.npcs = staleNpcs.map((n) => n.slug);
+  }
+
+  /* ── Items: never take something a player is carrying ───────── */
+
+  const itemNames = new Set(ITEMS.map((i) => i.name));
+  const staleItems = (
+    await prisma.mudItem.findMany({ select: { id: true, name: true } })
+  ).filter((i) => !itemNames.has(i.name));
+  for (const item of staleItems) {
+    const carried = await prisma.mudInventory.findFirst({
+      where: { itemId: item.id },
+      select: { id: true },
+    });
+    if (carried) {
+      // Reported by the caller, not deleted. Somebody owns this.
+      continue;
+    }
+    // Safe to remove: drop it off any floor first, then the catalog row.
+    await prisma.mudRoomItem.deleteMany({ where: { itemId: item.id } });
+    await prisma.mudItem.delete({ where: { id: item.id } });
+    result.items.push(item.name);
+  }
+
+  /* ── Rooms: move players out before the floor goes ──────────── */
+
+  const roomKeys = new Set(ROOMS.map((r) => r.enumKey));
+  const staleRooms = (
+    await prisma.mudRoom.findMany({ select: { id: true, enumKey: true } })
+  ).filter((r) => !roomKeys.has(r.enumKey));
+
+  if (staleRooms.length > 0) {
+    const spawn = await prisma.mudRoom.findUnique({
+      where: { enumKey: SPAWN_ROOM_ENUM_KEY },
+      select: { id: true },
+    });
+    const staleIds = staleRooms.map((r) => r.id);
+
+    if (spawn) {
+      const moved = await prisma.mudPlayer.updateMany({
+        where: { roomId: { in: staleIds } },
+        data: { roomId: spawn.id },
+      });
+      result.playersRelocated = moved.count;
+    } else {
+      // No spawn to move them to. Refuse the whole room prune rather than
+      // strand a character in a room that is about to stop existing.
+      return result;
+    }
+
+    // An NPC anchored in a pruned room loses its anchor rather than the NPC
+    // — the fixture still declares it, so deleting it here would fight the
+    // upsert that just ran.
+    await prisma.mudNpc.updateMany({
+      where: { roomId: { in: staleIds } },
+      data: { roomId: null },
+    });
+    await prisma.mudRoomItem.deleteMany({ where: { roomId: { in: staleIds } } });
+    await prisma.mudRoom.deleteMany({ where: { id: { in: staleIds } } });
+    result.rooms = staleRooms.map((r) => r.enumKey);
+  }
+
+  /* ── Races and classes: never orphan a character ────────────── */
+
+  const raceSlugs = new Set(RACES.map((r) => r.slug));
+  const staleRaces = (
+    await prisma.mudRace.findMany({ select: { id: true, slug: true } })
+  ).filter((r) => !raceSlugs.has(r.slug));
+  for (const race of staleRaces) {
+    const inUse = await prisma.mudPlayer.findFirst({
+      where: { raceId: race.id },
+      select: { id: true },
+    });
+    if (inUse) continue;
+    await prisma.mudRace.delete({ where: { id: race.id } });
+    result.races.push(race.slug);
+  }
+
+  const classSlugs = new Set(CLASSES.map((c) => c.slug));
+  const staleClasses = (
+    await prisma.mudClass.findMany({ select: { id: true, slug: true } })
+  ).filter((c) => !classSlugs.has(c.slug));
+  for (const klass of staleClasses) {
+    const inUse = await prisma.mudPlayer.findFirst({
+      where: { classId: klass.id },
+      select: { id: true },
+    });
+    if (inUse) continue;
+    await prisma.mudClass.delete({ where: { id: klass.id } });
+    result.classes.push(klass.slug);
+  }
+
+  return result;
 }
