@@ -17,6 +17,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test:unit",
     "test:unit": "npm run test:unit --workspaces --if-present",
+    "test:integration": "npm run test:integration --workspaces --if-present",
     "test:e2e": "npm run test:e2e --workspace apps/web",
     "prisma:generate": "npm run prisma:generate --workspace @nehsamud/engine-db",
     "prisma:migrate:dev": "npm run prisma:migrate:dev --workspace @nehsamud/engine-db",
