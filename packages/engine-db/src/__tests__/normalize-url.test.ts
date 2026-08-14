@@ -96,3 +96,61 @@ describe("normalizeDatabaseUrl", () => {
     expect(normalizeDatabaseUrl(once)).toBe(once);
   });
 });
+
+/* ── Loopback is not a network hop (NEH-710) ────────────────────── */
+
+describe("loopback hosts", () => {
+  // The regression that failed production deployments 641 and 642. The
+  // engine runs as a sidecar beside pgbouncer on localhost, which
+  // terminates no TLS — so demanding it meant the container could not boot,
+  // and Lightsail rolled the deployment back before anyone read the log.
+  const LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
+
+  it.each(LOOPBACK)("leaves %s alone when no sslmode is stated", (host) => {
+    const url = `postgresql://u:p@${host}:6432/db?pgbouncer=true`;
+    const out = normalizeDatabaseUrl(url);
+    expect(out).not.toContain("sslmode");
+    expect(out).not.toContain("uselibpqcompat");
+  });
+
+  it("preserves the exact URL HopperGuard's deploy generates", () => {
+    // Byte-for-byte the string that broke it, so a future change to the
+    // parameter handling cannot quietly reintroduce the failure.
+    const url =
+      "postgresql://u:p@localhost:6432/elderlink-db?connection_limit=5&pool_timeout=30&pgbouncer=true";
+    const out = normalizeDatabaseUrl(url);
+    expect(out).not.toMatch(/sslmode/);
+    expect(out).toContain("pgbouncer=true");
+    expect(out).toContain("connection_limit=5");
+  });
+
+  it.each(LOOPBACK)("still honours an explicit sslmode on %s", (host) => {
+    // The exemption governs only the unstated case. An operator who asks
+    // for TLS against localhost gets it.
+    const out = normalizeDatabaseUrl(
+      `postgresql://u:p@${host}:5432/db?sslmode=require`,
+    );
+    expect(out).toContain("sslmode=require");
+  });
+
+  it("does NOT exempt a host that merely looks local", () => {
+    // `localhost.example.com` and `127.0.0.1.nip.io` resolve elsewhere. A
+    // prefix or substring test would hand them plaintext.
+    for (const host of ["localhost.example.com", "127.0.0.1.nip.io", "mylocalhost"]) {
+      expect(normalizeDatabaseUrl(`postgresql://u:p@${host}:5432/db`)).toContain(
+        "sslmode=require",
+      );
+    }
+  });
+
+  it("still encrypts a managed host when nothing is stated", () => {
+    // The NEH-663 behaviour, pinned. Narrowing the default must not undo
+    // the fix that introduced it — against RDS this is what stops every
+    // query failing with a misleading P1010.
+    const out = normalizeDatabaseUrl(
+      "postgresql://u:p@ls-d9a45.chk08w46elwo.us-west-2.rds.amazonaws.com:5432/elderlink-db",
+    );
+    expect(out).toContain("sslmode=require");
+    expect(out).toContain("uselibpqcompat=true");
+  });
+});
