@@ -254,7 +254,19 @@ model MudItem {
   /// Matches MudItemType in hopper-play (numeric IntEnum mirrored
   /// from the Python `core.enums.item_type.ItemType`).
   type        Int
-  /// For weapons: base damage. For armor: damage reduction. Null
+  /// Where this is worn or wielded, e.g. "weapon", "head", "shield".
+  ///
+  /// DISTINCT FROM `type`, deliberately. Type says what a thing IS; slot says
+  /// where it goes. Equipping used to key off `type` alone, and because every
+  /// piece of armour shares one type, putting on a helmet took off your
+  /// shield — a character could wear exactly one piece of armour. Overloading
+  /// one column with both questions is what produced that.
+  ///
+  /// Null means the item cannot be equipped at all (a potion, a rope). The
+  /// slot NAMES are pack data, not an enum: the engine only enforces "one
+  /// equipped item per slot", and never asks what a slot means.
+  slot        String?  @db.VarChar(32)
+  /// For weapons: base damage. For armour: damage reduction. Null
   /// otherwise.
   baseValue   Int?     @map("base_value")
   weight      Int      @default(1)

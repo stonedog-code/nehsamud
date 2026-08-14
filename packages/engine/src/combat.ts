@@ -53,7 +53,7 @@ export interface Weapon {
   readonly accuracy?: number;
 }
 
-/** What armour contributes. Absent means unarmoured. */
+/** What one worn piece contributes. */
 export interface Armour {
   readonly name: string;
   /** Flat reduction applied after the damage roll. */
@@ -68,7 +68,18 @@ export interface Combatant {
   /** Damage before weapon, variance and level scaling. */
   readonly baseDamage: number;
   readonly weapon?: Weapon;
-  readonly armour?: Armour;
+  /**
+   * Every piece worn. Empty or absent means unarmoured.
+   *
+   * A LIST rather than one piece, since NEH-658. It was a single `Armour`,
+   * which matched an `equip` that allowed one item per item TYPE — and
+   * because all armour shares one type, a helmet and a shield could not
+   * both be worn. Both halves had to change together: a slot column alone
+   * would have let five pieces be equipped while this still read one,
+   * producing a sheet that lists four pieces and applies the protection of
+   * one.
+   */
+  readonly armour?: readonly Armour[];
   /** Extra hit chance from whatever the host derives it from. */
   readonly accuracyBonus?: number;
   /** Extra avoidance from whatever the host derives it from. */
@@ -109,6 +120,38 @@ export const DAMAGE_PER_LEVEL = 0.5;
 export const MIN_DAMAGE_ON_HIT = 1;
 
 /**
+ * The most of a blow armour may absorb, as a fraction.
+ *
+ * THE BALANCE HALF OF NEH-658, and the reason that issue insisted the two
+ * changes ship together. Once protection SUMS across worn pieces, a full
+ * set is 2+3+7 = 12 or more, against low-level attackers who hit for 2-5.
+ * With only the flat `MIN_DAMAGE_ON_HIT` floor, every one of those blows
+ * lands for exactly 1 and an armoured level-1 character is effectively
+ * immune to the entire starting area — durable is the goal, invulnerable is
+ * a broken game.
+ *
+ * So a fraction of every blow always gets through. It scales the right way
+ * on its own: a heavy hit still hurts through good armour, while armour
+ * keeps mattering because it is subtracted first and only this bounds it.
+ *
+ * 0.75 leaves a quarter of the swing coming through at worst. An unarmoured
+ * defender is completely unaffected by this — with no protection the
+ * subtraction never reaches the bound — so nothing about existing
+ * unarmoured combat changes.
+ */
+export const MAX_ARMOUR_ABSORB = 0.75;
+
+/** Protection summed across worn pieces. */
+export function totalProtection(armour: readonly Armour[] | undefined): number {
+  return (armour ?? []).reduce((sum, piece) => sum + piece.protection, 0);
+}
+
+/** Evasion summed across worn pieces. */
+export function totalEvasion(armour: readonly Armour[] | undefined): number {
+  return (armour ?? []).reduce((sum, piece) => sum + (piece.evasion ?? 0), 0);
+}
+
+/**
  * Chance `attacker` lands a blow on `defender`.
  *
  * Clamped at both ends. Without the floor, enough evasion makes a defender
@@ -120,7 +163,8 @@ export function hitChance(attacker: Combatant, defender: Combatant): number {
     BASE_HIT_CHANCE +
     (attacker.accuracyBonus ?? 0) +
     (attacker.weapon?.accuracy ?? 0);
-  const evasion = (defender.evasionBonus ?? 0) + (defender.armour?.evasion ?? 0);
+  const evasion =
+    (defender.evasionBonus ?? 0) + totalEvasion(defender.armour);
   return Math.min(MAX_HIT_CHANCE, Math.max(MIN_HIT_CHANCE, accuracy - evasion));
 }
 
@@ -158,11 +202,17 @@ export function resolveAttack(
   const rolled = Math.max(1, Math.round(base * swing));
   const rawDamage = critical ? rolled * CRIT_MULTIPLIER : rolled;
 
-  const protection = defender.armour?.protection ?? 0;
-  // A hit always hurts. Armour that could zero a blow outright would make a
-  // well-equipped defender invulnerable to weak attackers, and a fight
-  // between them would never resolve.
-  const damage = Math.max(MIN_DAMAGE_ON_HIT, rawDamage - protection);
+  const protection = totalProtection(defender.armour);
+  // A hit always hurts, and armour can never absorb ALL of one. The flat
+  // floor alone was enough while protection came from a single piece; with
+  // it summed across a full set, every low-level blow would land for
+  // exactly 1 and a well-equipped character would be immune to the whole
+  // starting area rather than merely tough.
+  const floor = Math.max(
+    MIN_DAMAGE_ON_HIT,
+    Math.ceil(rawDamage * (1 - MAX_ARMOUR_ABSORB)),
+  );
+  const damage = Math.max(floor, rawDamage - protection);
 
   return {
     hit: true,

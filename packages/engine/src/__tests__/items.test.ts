@@ -44,6 +44,7 @@ const DAGGER: CachedItem = {
   name: "Rusty Dagger",
   description: "Notched.",
   type: 1,
+  slot: "weapon",
   baseValue: 3,
   weight: 1,
 };
@@ -52,6 +53,7 @@ const COIN: CachedItem = {
   name: "Copper Coin",
   description: "Thin.",
   type: 5,
+  slot: null,
   baseValue: null,
   weight: 1,
 };

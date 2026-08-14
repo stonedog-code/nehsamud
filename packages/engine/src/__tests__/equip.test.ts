@@ -1,10 +1,10 @@
 import { createRng } from "../combat.js";
 import { dispatch } from "../commands/dispatch.js";
 import {
-  EQUIPPABLE_TYPES,
   equippedArmour,
-  equippedOfType,
+  equippedInSlot,
   equippedWeapon,
+  isEquippable,
 } from "../commands/handlers/equip.js";
 import { parseCommand } from "../commands/parser.js";
 import { DEFAULT_MAX_HP } from "../world/session.js";
@@ -36,6 +36,7 @@ const SWORD: CachedItem = {
   name: "Short Sword",
   description: "Balanced.",
   type: 1,
+  slot: "weapon",
   baseValue: 8,
   weight: 3,
 };
@@ -44,6 +45,7 @@ const MAUL: CachedItem = {
   name: "Maul",
   description: "Heavy.",
   type: 1,
+  slot: "weapon",
   baseValue: 14,
   weight: 9,
 };
@@ -52,14 +54,27 @@ const HELMET: CachedItem = {
   name: "Iron Helmet",
   description: "Riveted.",
   type: 2,
+  slot: "head",
   baseValue: 4,
   weight: 3,
+};
+const SHIELD: CachedItem = {
+  id: "item-shield",
+  name: "Wooden Shield",
+  description: "Banded oak.",
+  type: 2,
+  // Same TYPE as the helmet, different SLOT. That pairing is the whole
+  // point of NEH-658: under the old rule these two displaced each other.
+  slot: "shield",
+  baseValue: 3,
+  weight: 5,
 };
 const BERRIES: CachedItem = {
   id: "item-berries",
   name: "Berries",
   description: "Edible.",
   type: 3,
+  slot: null,
   baseValue: null,
   weight: 1,
 };
@@ -135,6 +150,7 @@ function entry(item: CachedItem, over: Partial<InventoryEntry> = {}): InventoryE
     name: item.name,
     quantity: 1,
     type: item.type,
+    slot: item.slot,
     baseValue: item.baseValue,
     ...over,
   };
@@ -176,7 +192,7 @@ describe("equip", () => {
     const text = await run(buildWorld(), s, "equip maul");
     expect(text).toContain("You put away the Short Sword.");
     expect(text).toContain("You equip the Maul.");
-    expect(equippedOfType(s.inventory, 1)?.name).toBe("Maul");
+    expect(equippedInSlot(s.inventory, "weapon")?.name).toBe("Maul");
     expect(s.inventory.filter((e) => e.equipped)).toHaveLength(1);
   });
 
@@ -186,8 +202,8 @@ describe("equip", () => {
       inventory: [entry(HELMET, { equipped: true }), entry(SWORD)],
     });
     await run(buildWorld(), s, "equip short");
-    expect(equippedOfType(s.inventory, 2)?.name).toBe("Iron Helmet");
-    expect(equippedOfType(s.inventory, 1)?.name).toBe("Short Sword");
+    expect(equippedInSlot(s.inventory, "head")?.name).toBe("Iron Helmet");
+    expect(equippedInSlot(s.inventory, "weapon")?.name).toBe("Short Sword");
   });
 
   it("refuses an item that is not equippable", async () => {
@@ -196,7 +212,7 @@ describe("equip", () => {
       "can't equip the Berries",
     );
     expect(s.inventory[0]?.equipped).toBeFalsy();
-    expect(EQUIPPABLE_TYPES.has(3)).toBe(false);
+    expect(isEquippable(entry(BERRIES))).toBe(false);
   });
 
   it("refuses, rather than crashing, on something not carried", async () => {
@@ -259,7 +275,7 @@ describe("unequip", () => {
 describe("equipped accessors", () => {
   it("report nothing for an empty or unequipped inventory", () => {
     expect(equippedWeapon([])).toBeUndefined();
-    expect(equippedArmour([entry(HELMET)])).toBeUndefined();
+    expect(equippedArmour([entry(HELMET)])).toEqual([]);
   });
 
   it("translate an entry into what the resolver wants", () => {
@@ -267,10 +283,9 @@ describe("equipped accessors", () => {
       name: "Maul",
       damage: 14,
     });
-    expect(equippedArmour([entry(HELMET, { equipped: true })])).toEqual({
-      name: "Iron Helmet",
-      protection: 4,
-    });
+    expect(equippedArmour([entry(HELMET, { equipped: true })])).toEqual([
+      { name: "Iron Helmet", protection: 4 },
+    ]);
   });
 
   it("survive a null baseValue rather than emitting NaN", () => {
@@ -318,24 +333,73 @@ describe("equipment reaches combat", () => {
     expect(withMaul).toBeGreaterThan(withSword);
   });
 
-  it("worn armour reduces what the player takes", async () => {
-    async function damageTaken(inventory: InventoryEntry[]) {
-      const w = buildWorld();
-      w.spawnHostile("brute", SQUARE.id);
-      const s = session({ inventory, currentHp: 5000, maxHp: 5000 });
-      for (let i = 0; i < 8; i += 1) {
-        await dispatch({
-          world: w,
-          session: s,
-          command: parseCommand("attack brute"),
-          rng: createRng(999 + i),
-        });
-      }
-      return 5000 - s.currentHp;
+  // Shared by the three armour tests below rather than declared inside one
+  // of them: the helmet-and-shield test needs the same measurement, and a
+  // second copy is a second thing to keep in step.
+  async function damageTaken(inventory: InventoryEntry[]) {
+    const w = buildWorld();
+    w.spawnHostile("brute", SQUARE.id);
+    const s = session({ inventory, currentHp: 5000, maxHp: 5000 });
+    for (let i = 0; i < 8; i += 1) {
+      await dispatch({
+        world: w,
+        session: s,
+        command: parseCommand("attack brute"),
+        rng: createRng(999 + i),
+      });
     }
+    return 5000 - s.currentHp;
+  }
+
+  it("worn armour reduces what the player takes", async () => {
     const bare = await damageTaken([]);
     const helmed = await damageTaken([entry(HELMET, { equipped: true })]);
     expect(helmed).toBeLessThan(bare);
+  });
+
+  it("a helmet and a shield are worn AT ONCE, and both reduce damage", async () => {
+    // The test NEH-658 exists for, and it asserts BOTH halves deliberately.
+    //
+    // Either half alone is the failure mode: a slot column without the
+    // resolver change lets two pieces be equipped while one is applied — a
+    // sheet listing two pieces of armour and using one, which looks like it
+    // works. The resolver change without the slots has nothing to sum.
+    const s = session({
+      inventory: [entry(HELMET), entry(SHIELD)],
+    });
+    await run(buildWorld(), s, "equip iron");
+    await run(buildWorld(), s, "equip wooden");
+
+    // Half one: both are on. Under the old type-bucketed rule the shield
+    // would have displaced the helmet — same type, one slot.
+    expect(equippedInSlot(s.inventory, "head")?.name).toBe("Iron Helmet");
+    expect(equippedInSlot(s.inventory, "shield")?.name).toBe("Wooden Shield");
+    expect(s.inventory.filter((e) => e.equipped)).toHaveLength(2);
+
+    // Half two: the second piece actually reaches combat.
+    const bare = await damageTaken([]);
+    const helmed = await damageTaken([entry(HELMET, { equipped: true })]);
+    const both = await damageTaken([
+      entry(HELMET, { equipped: true }),
+      entry(SHIELD, { equipped: true }),
+    ]);
+    expect(helmed).toBeLessThan(bare);
+    expect(both).toBeLessThan(helmed);
+  });
+
+  it("lists every worn piece on the character sheet", async () => {
+    const s = session({
+      inventory: [
+        entry(HELMET, { equipped: true }),
+        entry(SHIELD, { equipped: true }),
+      ],
+    });
+    const text = await run(buildWorld(), s, "statistics");
+    // The total, then each piece. A single line naming one of them is how a
+    // player concludes the other is doing nothing.
+    expect(text).toContain("Wearing: 7 protection");
+    expect(text).toContain("Iron Helmet (4)");
+    expect(text).toContain("Wooden Shield (3)");
   });
 });
 
@@ -360,7 +424,8 @@ describe("equipment is visible", () => {
     });
     const text = await run(buildWorld(), s, "statistics");
     expect(text).toContain("Wielding: Maul (+14 damage)");
-    expect(text).toContain("Wearing: Iron Helmet (4 protection)");
+    expect(text).toContain("Wearing: 4 protection");
+    expect(text).toContain("Iron Helmet (4)");
   });
 
   it("says so plainly when nothing is equipped", async () => {
@@ -380,12 +445,18 @@ describe("equipment is visible", () => {
 
 describe("get supplies the catalog facts", () => {
   it("an item picked up off the floor can be equipped", async () => {
-    // Without type/baseValue riding along from the catalog, everything
-    // picked up would be unequippable and nothing would say why.
+    // Without type, SLOT and baseValue riding along from the catalog,
+    // everything picked up would be unequippable and nothing would say why.
+    //
+    // The slot line is not decoration: `get` was not copying it when slots
+    // were introduced, which made every item taken off a floor refuse to be
+    // equipped — a flat "you can't equip the Short Sword" about a sword the
+    // player is visibly holding. This test is what caught it.
     const w = buildWorld();
     const s = session();
     await run(w, s, "get short");
     expect(s.inventory[0]?.type).toBe(1);
+    expect(s.inventory[0]?.slot).toBe("weapon");
     expect(s.inventory[0]?.baseValue).toBe(8);
     expect(await run(w, s, "equip short")).toContain("You equip");
   });

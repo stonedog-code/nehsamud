@@ -44,10 +44,17 @@ const uniqueName = (base: string): string => `${base}${RUN}`;
  */
 async function enterWorld(page: Page, url: string): Promise<void> {
   await page.goto(url);
-  await expect(page.getByTestId("transcript")).toHaveAttribute(
-    "data-status",
-    "playing",
-  );
+  const transcript = page.getByTestId("transcript");
+  await expect(transcript).toHaveAttribute("data-status", "playing");
+  // AND the character actually exists. `playing` is set when AUTH_OK lands,
+  // which is BEFORE creation finishes — so a test that typed a command on
+  // that signal alone could put it into the character-creation flow instead
+  // of the game. Under a loaded machine that is exactly what happened: the
+  // transcript showed the echoed command ahead of the greeting, and the
+  // verb was simply never answered.
+  //
+  // The room description is the first thing only a created character sees.
+  await expect(transcript).toContainText("Exits:");
 }
 
 test("the front page offers all three modes on the dev site", async ({

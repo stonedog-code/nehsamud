@@ -438,7 +438,7 @@ export async function loadInventory(
       // Type and base value come from the catalog, not the inventory row —
       // they describe the ITEM, and duplicating them per player is how the
       // two drift after a balance change.
-      item: { select: { name: true, type: true, baseValue: true } },
+      item: { select: { name: true, type: true, slot: true, baseValue: true } },
     },
   });
   return rows.map((r) => ({
@@ -447,6 +447,7 @@ export async function loadInventory(
     quantity: r.quantity,
     equipped: r.equipped,
     type: r.item.type,
+    slot: r.item.slot,
     baseValue: r.item.baseValue,
   }));
 }

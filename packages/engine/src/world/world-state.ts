@@ -102,6 +102,8 @@ export interface CachedItem {
   description: string;
   /** Mirrors MudItemType. Weapons/armour interpret baseValue. */
   type: number;
+  /** Where it is equipped, or null when it cannot be. */
+  slot: string | null;
   baseValue: number | null;
   weight: number;
 }
@@ -277,6 +279,7 @@ export class WorldState {
         name: true,
         description: true,
         type: true,
+        slot: true,
         baseValue: true,
         weight: true,
       },

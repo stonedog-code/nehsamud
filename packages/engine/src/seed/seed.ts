@@ -201,6 +201,7 @@ async function seedItems(prisma: PrismaClient): Promise<number> {
       update: {
         description: i.description,
         type: i.type,
+        slot: i.slot ?? null,
         baseValue: i.baseValue,
         weight: i.weight,
       },
