@@ -46,6 +46,15 @@ export interface CommandContext {
    * assertions — which is exactly why tests must pass one.
    */
   rng?: Rng;
+  /**
+   * Whether the person who typed this may act on the world rather than in
+   * it — see `operators.ts`.
+   *
+   * Optional and false-by-default, so every existing handler and test is
+   * unaffected and a caller that forgets to thread it grants nothing. An
+   * authorisation flag whose omission is permissive is worse than none.
+   */
+  isOperator?: boolean;
 }
 
 /**

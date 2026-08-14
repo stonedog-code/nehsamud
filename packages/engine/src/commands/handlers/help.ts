@@ -13,7 +13,7 @@
 import type { CommandHandler } from "../types.js";
 import { reply } from "../types.js";
 
-export const helpHandler: CommandHandler = ({ world }) => {
+export const helpHandler: CommandHandler = ({ world, isOperator }) => {
   const lines = [
     "Available commands:",
     "  look (l)            — describe the room you're in",
@@ -60,6 +60,17 @@ export const helpHandler: CommandHandler = ({ world }) => {
     "  help (h, ?)         — show this list",
     "  quit (q)            — disconnect",
   );
+
+  // Only an operator is told this exists. The dispatcher already refuses it
+  // to everyone else as an unknown verb, and a help line naming a command
+  // nobody else can run would undo that on the most-read screen in the game.
+  if (isOperator) {
+    lines.push(
+      "",
+      "Operator:",
+      "  system <message>    — announce to every connected player",
+    );
+  }
 
   return reply(...lines);
 };

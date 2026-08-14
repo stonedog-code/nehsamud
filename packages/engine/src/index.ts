@@ -141,6 +141,7 @@ export {
 /* ── Services ─────────────────────────────────────────────────── */
 export { createAiServices, type AiServices } from "./ai/factory.js";
 export { currentCapabilities, type Capabilities } from "./capabilities.js";
+export { isOperator, resolveOperators, OPERATORS_ENV } from "./operators.js";
 export { createDb, disconnectDb, getDb, initDb } from "./db.js";
 export { initTelemetry } from "./telemetry/setup.js";
 

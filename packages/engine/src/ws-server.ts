@@ -45,6 +45,7 @@ import {
 import { dispatch } from "./commands/dispatch.js";
 import type { Broadcast } from "./commands/types.js";
 import { parseCommand } from "./commands/parser.js";
+import { isOperator, resolveOperators } from "./operators.js";
 import { RateLimiter, throttleMessage } from "./rate-limit.js";
 import {
   applyDeathDrop,
@@ -188,6 +189,18 @@ export interface MudWsServerOptions {
    * to assert the refusal without sending twenty frames.
    */
   rateLimit?: { capacity?: number; perSecond?: number; now?: () => number };
+  /**
+   * Owner ids permitted to run operator verbs.
+   *
+   * Injected rather than read from `process.env` here so a test can grant
+   * authority without mutating the environment, and so a host embedding the
+   * engine can source it however it likes. Production reads
+   * `MUD_OPERATOR_IDS` via `resolveOperators()` — see `operators.ts` for
+   * why the grant lives in deployment config rather than in the database.
+   *
+   * Defaults to the empty set: a world with no operators.
+   */
+  operators?: ReadonlySet<string>;
 }
 
 const DEFAULT_SPAWN_ROOM_ENUM_KEY = "TOWNSMEE_TOWNSQUARE";
@@ -263,6 +276,7 @@ export class MudWsServer {
   private readonly tracer: Tracer | undefined;
   private readonly rng: Rng | undefined;
   private readonly rateLimit: MudWsServerOptions["rateLimit"];
+  private readonly operators: ReadonlySet<string>;
   /** Map of socket → MudPlayer.id so we know which row to update
    * after each dispatch. */
   private readonly playerIdBySocket = new WeakMap<WebSocket, string>();
@@ -309,6 +323,7 @@ export class MudWsServer {
     this.tracer = options.tracer;
     this.rng = options.rng;
     this.rateLimit = options.rateLimit;
+    this.operators = options.operators ?? resolveOperators();
     this.wss = new WebSocketServer({
       server: options.server,
       port: options.port,
@@ -530,6 +545,7 @@ export class MudWsServer {
       tracer: this.tracer,
       rng: this.rng,
       sessions: this.sessions,
+      isOperator: isOperator(session.userId, this.operators),
     });
     for (const line of look.response.lines) {
       send(socket, { type: "SERVER_MESSAGE", message: line });
@@ -786,6 +802,10 @@ export class MudWsServer {
         tracer: this.tracer,
         rng: this.rng,
         sessions: this.sessions,
+        // Resolved per command rather than cached on the session, so
+        // revoking authority takes effect on the operator's next keystroke
+        // instead of on their next login.
+        isOperator: isOperator(session.userId, this.operators),
       });
       for (const line of result.response.lines) {
         send(socket, { type: "SERVER_MESSAGE", message: line });
