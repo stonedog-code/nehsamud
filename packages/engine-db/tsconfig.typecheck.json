@@ -1,0 +1,14 @@
+{
+  // Typecheck config — see the long note in packages/engine's copy.
+  //
+  // This package's `tsconfig.json` narrows `include` to `src/index.ts`
+  // alone, so its typecheck covered exactly one file: not just the tests
+  // but anything else under `src/` was invisible to it. `include` is
+  // therefore widened here as well as `exclude` relaxed.
+  //
+  // `src/generated` stays excluded in both. It is Prisma's output, it is
+  // regenerated on every build, and its diagnostics are not ours to fix.
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*"],
+  "exclude": ["dist", "node_modules", "src/generated"]
+}
