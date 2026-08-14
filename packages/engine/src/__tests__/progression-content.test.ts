@@ -21,7 +21,12 @@
  */
 
 import { HOSTILE_SPAWNS, HOSTILES } from "../seed/fixtures/index.js";
-import { MAX_LEVEL, xpForLevel } from "../progression.js";
+import {
+  MAX_LEVEL,
+  REBIRTH_EXPERIENCE_RETAINED,
+  STARTING_LIVES,
+  xpForLevel,
+} from "../progression.js";
 import { RESPAWN_DELAY_MS } from "../world/world-state.js";
 
 /** Experience from clearing every spawn point in the world once. */
@@ -63,6 +68,16 @@ describe("the world can supply the curve", () => {
     // slow, it was unreachable. This asserts the fixed pool is gone.
     expect(experiencePerClear()).toBeGreaterThan(0);
     expect(Number.isFinite(bestCaseHoursToCap())).toBe(true);
+  });
+
+  it("nine lives is what makes the cap survivable, not the curve", () => {
+    // R19b-d. The cap stayed at 100 rather than being lowered, and the
+    // reason it is reachable is that a death costs a life rather than a
+    // character. This pins the relationship: 30% retained means a rebirth
+    // sets a player back rather than ending them.
+    expect(STARTING_LIVES).toBe(9);
+    expect(REBIRTH_EXPERIENCE_RETAINED).toBe(0.3);
+    expect(MAX_LEVEL).toBe(100);
   });
 
   it("reaching the cap is not absurd, and not trivial", () => {

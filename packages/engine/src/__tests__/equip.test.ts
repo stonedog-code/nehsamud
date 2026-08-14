@@ -1,3 +1,4 @@
+import { STARTING_LIVES } from "../progression.js";
 import { createRng } from "../combat.js";
 import { dispatch } from "../commands/dispatch.js";
 import {
@@ -165,6 +166,8 @@ function session(over: Partial<SessionState> = {}): SessionState {
     maxHp: DEFAULT_MAX_HP,
     experience: 0,
     level: 1,
+    lives: STARTING_LIVES,
+    rebirths: 0,
     inventory: [],
     defeated: false,
     resting: false,

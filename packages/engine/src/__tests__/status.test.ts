@@ -1,7 +1,7 @@
 import { dispatch } from "../commands/dispatch.js";
 import { restAmount } from "../commands/handlers/status.js";
 import { parseCommand } from "../commands/parser.js";
-import { MAX_LEVEL, xpForLevel } from "../progression.js";
+import { MAX_LEVEL, STARTING_LIVES, xpForLevel } from "../progression.js";
 import { DEFAULT_MAX_HP } from "../world/session.js";
 import type { CharacterSheet, SessionState } from "../world/session.js";
 import { WorldState } from "../world/world-state.js";
@@ -83,6 +83,8 @@ function session(over: Partial<SessionState> = {}): SessionState {
     maxHp: DEFAULT_MAX_HP,
     experience: 0,
     level: 1,
+    lives: STARTING_LIVES,
+    rebirths: 0,
     inventory: [],
     defeated: false,
     resting: false,

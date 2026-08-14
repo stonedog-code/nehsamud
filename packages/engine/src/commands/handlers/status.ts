@@ -30,6 +30,7 @@
 
 import {
   MAX_LEVEL,
+  STARTING_LIVES,
   levelForXp,
   xpForLevel,
   xpToNextLevel,
@@ -75,8 +76,20 @@ export const statisticsHandler: CommandHandler = ({ session }) => {
 
   lines.push(
     `Health: ${session.currentHp} of ${session.maxHp}`,
+    // Lives before experience: it is the number that decides how carefully
+    // the next fight should be taken.
+    session.lives === 1
+      ? "Lives: 1 — the next death starts you over."
+      : `Lives: ${session.lives} of ${STARTING_LIVES}`,
     `Experience: ${session.experience}`,
   );
+  if (session.rebirths > 0) {
+    lines.push(
+      session.rebirths === 1
+        ? "You have started over once."
+        : `You have started over ${session.rebirths} times.`,
+    );
+  }
 
   if (level < MAX_LEVEL) {
     lines.push(

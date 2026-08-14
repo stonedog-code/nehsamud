@@ -60,6 +60,8 @@ export interface PlayerRecord {
   maxHp: number;
   experience: number;
   level: number;
+  lives: number;
+  rebirths: number;
   /**
    * What this character was built from, in the pack's declared order.
    *
@@ -85,6 +87,8 @@ const PLAYER_SELECT = {
   maxHp: true,
   experience: true,
   level: true,
+  lives: true,
+  rebirths: true,
   strength: true,
   intelligence: true,
   wisdom: true,
@@ -110,6 +114,8 @@ interface PlayerRow {
   maxHp: number;
   experience: number;
   level: number;
+  lives: number;
+  rebirths: number;
   strength: number;
   intelligence: number;
   wisdom: number;
@@ -134,6 +140,8 @@ function toRecord(row: PlayerRow): PlayerRecord {
     maxHp: row.maxHp,
     experience: row.experience,
     level: row.level,
+    lives: row.lives,
+    rebirths: row.rebirths,
     // Sorted here rather than in the query: `position` lives on the related
     // group, and a player's handful of options is not worth an orderBy on a
     // join for. Ties break on key so the order is total — otherwise two
@@ -395,7 +403,7 @@ export async function savePlayerState(
   playerId: string,
   session: Pick<
     SessionState,
-    "currentRoomId" | "currentHp" | "maxHp" | "experience"
+    "currentRoomId" | "currentHp" | "maxHp" | "experience" | "lives" | "rebirths"
   > &
     Partial<Pick<SessionState, "level">>,
 ): Promise<void> {
@@ -406,6 +414,8 @@ export async function savePlayerState(
       currentHp: session.currentHp,
       maxHp: session.maxHp,
       experience: session.experience,
+      lives: session.lives,
+      rebirths: session.rebirths,
       // Derived from experience rather than taken from the session, so the
       // column can never be written inconsistent with the XP beside it — the
       // level is a cache and this is where it gets refreshed. `level` on the
@@ -603,4 +613,84 @@ export async function saveInventoryAndRoom(
       }),
     ),
   ]);
+}
+
+
+/**
+ * Re-make an existing character after its ninth death.
+ *
+ * Replaces its option rows and recomputes its attributes from the new
+ * choices. Everything else — name, owner, experience, lives, rebirths —
+ * was already settled by `applyDeath` and is written by `savePlayerState`.
+ *
+ * ONE TRANSACTION over `mud.player_option`, for the same reason the create
+ * path is: a crash between the delete and the insert would leave a
+ * character with no record of what it is, and `(player, group)` being the
+ * primary key means a partial re-insert cannot even be retried cleanly.
+ *
+ * Validation is deliberately the same as creation's — `createPlayer` and
+ * this are the only two ways options are ever set, and a rebirth that
+ * accepted an option creation would refuse is a way to get a build you
+ * could not otherwise have.
+ */
+export async function rebirthPlayer(
+  prisma: PrismaClient,
+  playerId: string,
+  choice: CharacterChoice,
+): Promise<PlayerRecord> {
+  const groups = await prisma.mudCharacterOptionGroup.findMany({
+    select: { id: true, key: true, name: true, required: true },
+  });
+  const byKey = new Map(groups.map((g) => [g.key, g]));
+  for (const key of Object.keys(choice)) {
+    if (!byKey.has(key)) {
+      throw new Error(`rebirthPlayer: "${key}" is not a character option group.`);
+    }
+  }
+
+  const selections: Array<{ groupId: string; optionId: string }> = [];
+  const mods: AttributeMods[] = [];
+  for (const group of groups) {
+    const slug = choice[group.key];
+    if (slug === undefined || slug.trim() === "") {
+      if (group.required) {
+        throw new Error(`rebirthPlayer: "${group.name}" is required.`);
+      }
+      continue;
+    }
+    const option = await prisma.mudCharacterOption.findUnique({
+      where: { groupId_slug: { groupId: group.id, slug } },
+      select: OPTION_SELECT,
+    });
+    if (!option || !option.selectable) {
+      throw new Error(`rebirthPlayer: "${slug}" is not a selectable ${group.name}.`);
+    }
+    selections.push({ groupId: group.id, optionId: option.id });
+    mods.push(option);
+  }
+
+  const { attributes, maxHp } = deriveCharacter(mods);
+
+  await prisma.$transaction([
+    prisma.mudPlayerOption.deleteMany({ where: { playerId } }),
+    ...selections.map((sel) =>
+      prisma.mudPlayerOption.create({ data: { playerId, ...sel } }),
+    ),
+    prisma.mudPlayer.update({
+      where: { id: playerId },
+      data: {
+        ...attributes,
+        // Full health, because a reborn character standing at the HP it
+        // died on would be killed again by the first thing it met.
+        maxHp,
+        currentHp: maxHp,
+      },
+    }),
+  ]);
+
+  const row = await prisma.mudPlayer.findUniqueOrThrow({
+    where: { id: playerId },
+    select: PLAYER_SELECT,
+  });
+  return toRecord(row);
 }

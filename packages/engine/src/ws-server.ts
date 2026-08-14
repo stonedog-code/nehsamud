@@ -49,6 +49,7 @@ import {
   applyDeathDrop,
   saveInventoryAndRoom,
   createPlayer,
+  rebirthPlayer,
   loadPlayer,
   loadInventory,
   listOptionGroups,
@@ -694,6 +695,18 @@ export class MudWsServer {
       });
       return;
     }
+    // A character that spent its ninth life is choosing what to come back
+    // as. Same questions as creation, so a player answers them the way they
+    // already know how — and the same validation, so a rebirth cannot reach
+    // a build creation would refuse.
+    const rebirthSession = this.sessions.get(socket);
+    if (rebirthSession?.pendingRebirth) {
+      const conn = this.connections.get(socket);
+      if (conn?.userId) {
+        void this.handleRebirth(socket, rebirthSession, raw);
+        return;
+      }
+    }
     // First post-AUTH message for a brand-new user: route through the
     // character-creation handler, not the gameplay dispatcher.
     if (this.pendingCreation.has(socket)) {
@@ -760,6 +773,70 @@ export class MudWsServer {
         socket.close(1000, "client-quit");
       }
     })();
+  }
+
+  /**
+   * Collect the answers for a rebirth, then re-make the character.
+   *
+   * Reuses `pendingCreation` as the scratchpad because the questions are
+   * identical — a second half-answered-choices structure would be a second
+   * thing to keep in step with the option groups.
+   */
+  private async handleRebirth(
+    socket: WebSocket,
+    session: import("./world/session.js").SessionState,
+    raw: string,
+  ): Promise<void> {
+    if (!this.prisma || !this.world) return;
+    const pending = this.pendingCreation.get(socket) ?? {
+      name: session.characterName,
+      choice: {},
+    };
+    const groups = await listOptionGroups(this.prisma);
+    const asking = nextUnanswered(groups, pending.choice);
+
+    if (asking) {
+      const chosen = matchOption(asking.options, raw.trim());
+      if (!chosen) {
+        send(socket, {
+          type: "SERVER_MESSAGE",
+          message: `"${raw.trim()}" isn't one of the ${asking.name.toLowerCase()} choices. Choose one of: ${asking.options.map((o) => o.name).join(", ")}.`,
+        });
+        return;
+      }
+      pending.choice[asking.key] = chosen.slug;
+      this.pendingCreation.set(socket, pending);
+    }
+
+    const next = nextUnanswered(groups, pending.choice);
+    if (next) {
+      send(socket, {
+        type: "SERVER_MESSAGE",
+        message: `Choose a ${next.name.toLowerCase()}: ${next.options.map((o) => o.name).join(", ")}.`,
+      });
+      return;
+    }
+
+    const playerId = this.playerIdBySocket.get(socket);
+    if (!playerId) return;
+    try {
+      const remade = await rebirthPlayer(this.prisma, playerId, pending.choice);
+      this.pendingCreation.delete(socket);
+      session.pendingRebirth = false;
+      session.sheet = sheetFor(remade);
+      session.maxHp = remade.maxHp;
+      session.currentHp = remade.currentHp;
+      const described = remade.options.map((o) => o.optionName).join(" ");
+      send(socket, {
+        type: "SERVER_MESSAGE",
+        message: `You return${described ? ` as ${described}` : ""}, with ${session.experience} experience and ${session.lives} lives.`,
+      });
+    } catch (err) {
+      send(socket, {
+        type: "SERVER_MESSAGE",
+        message: `Couldn't remake your character: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
   }
 
   /**
