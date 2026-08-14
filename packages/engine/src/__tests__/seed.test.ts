@@ -48,15 +48,33 @@ function makeMockPrisma() {
   return {
     calls,
     prisma: {
+      // Every findMany below returns exactly what the fixtures declare, so
+      // the prune step finds nothing stale and these orchestration tests stay
+      // about seeding. Pruning has its own suite with its own fake.
       mudRace: {
         upsert: jest.fn(async (call: UpsertCall) => {
           calls.race.push(call);
         }),
+        findMany: jest.fn(async () =>
+          RACES.map((r, i) => ({ id: `race-${i}`, slug: r.slug })),
+        ),
+        delete: jest.fn(async () => undefined),
       },
       mudClass: {
         upsert: jest.fn(async (call: UpsertCall) => {
           calls.class.push(call);
         }),
+        findMany: jest.fn(async () =>
+          CLASSES.map((c, i) => ({ id: `class-${i}`, slug: c.slug })),
+        ),
+        delete: jest.fn(async () => undefined),
+      },
+      mudPlayer: {
+        findFirst: jest.fn(async () => null),
+        updateMany: jest.fn(async () => ({ count: 0 })),
+      },
+      mudInventory: {
+        findFirst: jest.fn(async () => null),
       },
       mudRoom: {
         upsert: jest.fn(async (call: UpsertCall) => {
@@ -71,6 +89,7 @@ function makeMockPrisma() {
         update: jest.fn(async (call: UpdateCall) => {
           calls.roomUpdates.push(call);
         }),
+        deleteMany: jest.fn(async () => ({ count: 0 })),
       },
       mudItem: {
         upsert: jest.fn(async (call: UpsertCall) => {
@@ -80,6 +99,10 @@ function makeMockPrisma() {
         findUnique: jest.fn(async (call: { where: { name: string } }) => ({
           id: `item-${call.where.name.toLowerCase().replace(/\s+/g, "-")}`,
         })),
+        findMany: jest.fn(async () =>
+          ITEMS.map((i, idx) => ({ id: `item-${idx}`, name: i.name })),
+        ),
+        delete: jest.fn(async () => undefined),
       },
       // Room contents. findFirst returns null so a fresh world places its
       // starting items; the idempotent-skip path is covered separately.
@@ -89,16 +112,26 @@ function makeMockPrisma() {
           calls.roomItem.push(call);
           return call.data;
         }),
+        deleteMany: jest.fn(async () => ({ count: 0 })),
       },
       mudMonster: {
         upsert: jest.fn(async (call: UpsertCall) => {
           calls.monster.push(call);
         }),
+        findMany: jest.fn(async () =>
+          MONSTERS.map((m, i) => ({ id: `monster-${i}`, slug: m.slug })),
+        ),
+        deleteMany: jest.fn(async () => ({ count: 0 })),
       },
       mudNpc: {
         upsert: jest.fn(async (call: UpsertCall) => {
           calls.npc.push(call);
         }),
+        findMany: jest.fn(async () =>
+          NPCS.map((n, i) => ({ id: `npc-${i}`, slug: n.slug })),
+        ),
+        deleteMany: jest.fn(async () => ({ count: 0 })),
+        updateMany: jest.fn(async () => ({ count: 0 })),
       },
     },
   };
@@ -123,6 +156,18 @@ describe("seedCatalog — orchestration", () => {
       placements: ITEM_PLACEMENTS.length,
       monsters: MONSTERS.length,
       npcs: NPCS.length,
+      // Nothing stale in this fake, so the prune reports an empty removal in
+      // every category. That IS the assertion: a seed against a database
+      // already matching the fixtures must not delete anything.
+      pruned: {
+        rooms: [],
+        npcs: [],
+        items: [],
+        monsters: [],
+        races: [],
+        classes: [],
+        playersRelocated: 0,
+      },
     });
 
     expect(calls.race).toHaveLength(RACES.length);
