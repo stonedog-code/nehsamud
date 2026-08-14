@@ -26,6 +26,7 @@ import { createServer as createHttpServer } from "node:http";
 
 import { createAiServices } from "./ai/factory.js";
 import { disconnectDb, initDb } from "./db.js";
+import { withBootRetry } from "./boot-retry.js";
 import { resolveGameMode } from "./game-mode.js";
 import { listOptionGroups } from "./persistence/player-store.js";
 import {
@@ -66,9 +67,19 @@ async function main(): Promise<void> {
   // world nobody chose.
   const gameMode = resolveGameMode();
 
-  const prisma = await initDb();
+  // Retried, because this container's boot depends on a SIBLING container
+  // (pgbouncer) that Lightsail starts without ordering — and a deployment
+  // activates as a unit, so exiting here fails every other container with it.
+  // On 2026-08-14 that killed three deployments, one of them a web release with
+  // no MUD content in it at all (NEH-714). A first-attempt failure against a
+  // sidecar that may still be starting is not evidence the database is
+  // unreachable; it is evidence we asked too early.
+  //
+  // Bounded, and it still fails: a genuinely misconfigured database exits with
+  // the real error after ~31s rather than booting a world with no rooms in it.
+  const prisma = await withBootRetry("db.connect", () => initDb());
   const world = new WorldState(gameMode);
-  await world.load(prisma);
+  await withBootRetry("world.load", () => world.load(prisma));
 
   // Hostiles are skipped entirely in a mode without them. `spawnHostile`
   // would refuse anyway — that is the point of having both guards — but
