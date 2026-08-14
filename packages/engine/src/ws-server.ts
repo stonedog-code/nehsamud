@@ -45,6 +45,7 @@ import {
 import { dispatch } from "./commands/dispatch.js";
 import type { Broadcast } from "./commands/types.js";
 import { parseCommand } from "./commands/parser.js";
+import { RateLimiter, throttleMessage } from "./rate-limit.js";
 import {
   applyDeathDrop,
   saveInventoryAndRoom,
@@ -182,6 +183,11 @@ export interface MudWsServerOptions {
    * a second mechanism for it would be a second thing to remember.
    */
   rng?: Rng;
+  /**
+   * Command-rate limits, per connection. Injected only by tests, which need
+   * to assert the refusal without sending twenty frames.
+   */
+  rateLimit?: { capacity?: number; perSecond?: number; now?: () => number };
 }
 
 const DEFAULT_SPAWN_ROOM_ENUM_KEY = "TOWNSMEE_TOWNSQUARE";
@@ -256,6 +262,7 @@ export class MudWsServer {
   private readonly roomArt: RoomArtGenerator;
   private readonly tracer: Tracer | undefined;
   private readonly rng: Rng | undefined;
+  private readonly rateLimit: MudWsServerOptions["rateLimit"];
   /** Map of socket → MudPlayer.id so we know which row to update
    * after each dispatch. */
   private readonly playerIdBySocket = new WeakMap<WebSocket, string>();
@@ -268,6 +275,15 @@ export class MudWsServer {
    * WeakMaps above get for free. `close` does that.
    */
   private readonly socketByUserId = new Map<string, WebSocket>();
+  /**
+   * Command rate, per connection.
+   *
+   * On the SERVER because scripting is client-side: a third-party client
+   * written in C# or Python does not use the engine's `ScriptRunner` and so
+   * inherits none of its budget. This is the limit no client can opt out of
+   * (PRD-0001 R21/R22). A WeakMap so it goes when the socket does.
+   */
+  private readonly limiters = new WeakMap<WebSocket, RateLimiter>();
   /** Connections that have authenticated but don't have a MudPlayer
    * row yet. The next CLIENT_MESSAGE is parsed as
    *   `create <name>`  (or just `<name>`)
@@ -292,6 +308,7 @@ export class MudWsServer {
     this.roomArt = options.roomArt ?? new RoomArtGenerator();
     this.tracer = options.tracer;
     this.rng = options.rng;
+    this.rateLimit = options.rateLimit;
     this.wss = new WebSocketServer({
       server: options.server,
       port: options.port,
@@ -687,7 +704,30 @@ export class MudWsServer {
     });
   }
 
+  /** This connection's bucket, created on first use. */
+  private limiterFor(socket: WebSocket): RateLimiter {
+    let limiter = this.limiters.get(socket);
+    if (!limiter) {
+      limiter = new RateLimiter(
+        this.rateLimit ? { ...this.rateLimit } : undefined,
+      );
+      this.limiters.set(socket, limiter);
+    }
+    return limiter;
+  }
+
   private handleClientMessage(socket: WebSocket, raw: string): void {
+    // BEFORE anything else — before the world check, before creation, before
+    // dispatch. A refused command must cost the server a token comparison
+    // and nothing more, or the limiter is itself a way to make it work.
+    const decision = this.limiterFor(socket).take();
+    if (!decision.allowed) {
+      send(socket, {
+        type: "SERVER_MESSAGE",
+        message: throttleMessage(decision.retryAfterSeconds),
+      });
+      return;
+    }
     if (!this.world) {
       send(socket, {
         type: "SERVER_MESSAGE",
