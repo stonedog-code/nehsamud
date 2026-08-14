@@ -514,3 +514,93 @@ export async function saveRoomItems(
     ),
   ]);
 }
+
+/* ─── PVP transfers ────────────────────────────────────────────────
+ *
+ * Death and looting each move a whole inventory between owners, and both do
+ * it in ONE transaction. A loop of individual moves is the version that
+ * duplicates a sword when it fails halfway, or destroys one — and a player
+ * losing something they were carrying to a crash is the failure nobody
+ * forgives, because there is no way to give it back.
+ */
+
+/** A stack as the world holds it on a floor. */
+export interface FloorStack {
+  itemId: string;
+  quantity: number;
+  hidden?: boolean;
+}
+
+/**
+ * A player died: everything they carried is now on the floor.
+ *
+ * The victim's rows and the room's contents are written together, so there
+ * is no instant at which the items exist in both places (duplication) or in
+ * neither (destruction).
+ */
+export async function applyDeathDrop(
+  prisma: PrismaClient,
+  victimPlayerId: string,
+  roomId: string,
+  floor: FloorStack[],
+): Promise<void> {
+  await prisma.$transaction([
+    prisma.mudInventory.deleteMany({ where: { playerId: victimPlayerId } }),
+    prisma.mudRoomItem.deleteMany({ where: { roomId } }),
+    ...floor.map((stack) =>
+      prisma.mudRoomItem.create({
+        data: {
+          roomId,
+          itemId: stack.itemId,
+          quantity: stack.quantity,
+          hidden: stack.hidden ?? false,
+        },
+      }),
+    ),
+  ]);
+}
+
+/**
+ * A player's inventory and the floor they are standing on, written together.
+ *
+ * ONE TRANSACTION over both tables, which is what makes `loot` safe: it
+ * moves a whole pile from the floor into someone's hands, and a crash
+ * between the two halves would either duplicate everything or destroy it.
+ * There is no way to give a player back something they were carrying.
+ *
+ * Used for EVERY command rather than only for looting. `get` and `drop`
+ * have the same shape in miniature, and one persistence path that is always
+ * atomic beats two that differ in whether they are.
+ */
+export async function saveInventoryAndRoom(
+  prisma: PrismaClient,
+  looterPlayerId: string,
+  looterInventory: InventoryEntry[],
+  roomId: string,
+  floor: FloorStack[],
+): Promise<void> {
+  await prisma.$transaction([
+    prisma.mudInventory.deleteMany({ where: { playerId: looterPlayerId } }),
+    ...looterInventory.map((entry) =>
+      prisma.mudInventory.create({
+        data: {
+          playerId: looterPlayerId,
+          itemId: entry.itemId,
+          quantity: entry.quantity,
+          equipped: entry.equipped ?? false,
+        },
+      }),
+    ),
+    prisma.mudRoomItem.deleteMany({ where: { roomId } }),
+    ...floor.map((stack) =>
+      prisma.mudRoomItem.create({
+        data: {
+          roomId,
+          itemId: stack.itemId,
+          quantity: stack.quantity,
+          hidden: stack.hidden ?? false,
+        },
+      }),
+    ),
+  ]);
+}

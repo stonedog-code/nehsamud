@@ -119,3 +119,12 @@ export function resolveGameMode(
  * Anything added here must also be added to the mode-aware handler table.
  */
 export const COMBAT_VERBS: ReadonlySet<string> = new Set(["attack"]);
+
+/**
+ * Verbs that constitute looting.
+ *
+ * Separate from {@link COMBAT_VERBS} because the capability is separate: a
+ * PVE world has combat and no looting. Anything added here must also be
+ * added to the looting handler table.
+ */
+export const LOOTING_VERBS: ReadonlySet<string> = new Set(["loot"]);

@@ -150,6 +150,28 @@ interface SpawnPoint {
   respawnAt?: number;
 }
 
+/**
+ * What a defeated player leaves behind.
+ *
+ * A MARKER, not a container. The items themselves go onto the room floor at
+ * the moment of death, where they persist in `mud.room_item` like anything
+ * else dropped; this only groups them so `loot <name>` can take the lot in
+ * one go instead of making the winner type `get` eleven times.
+ *
+ * That split is deliberate. A corpse holding the items in memory would lose
+ * them all on a restart — the victim's rows are already gone by then. This
+ * way a restart costs the convenience of `loot` and nothing else: the pile
+ * is still on the floor and still `get`-able, one piece at a time.
+ */
+export interface Corpse {
+  id: string;
+  /** Whose it was, as other players knew them. */
+  ownerName: string;
+  roomId: string;
+  /** What went on the floor, so `loot` knows how much of it is this pile. */
+  contents: Array<{ itemId: string; name: string; quantity: number }>;
+}
+
 export class WorldState {
   /**
    * The mode this world runs in. Set once at construction and never
@@ -195,6 +217,8 @@ export class WorldState {
   private nextHostileInstanceCounter = 0;
   /** Declared places a hostile belongs, and when each may refill. */
   private spawnPoints: SpawnPoint[] = [];
+  private corpses = new Map<string, Corpse>();
+  private nextCorpseCounter = 0;
   private items = new Map<string, CachedItem>();
   /** Items lying on the floor, per room. Mutable: `get` and `drop` move
    * stacks between here and a player's inventory. */
@@ -316,6 +340,10 @@ export class WorldState {
     // whoever boots the world, so keeping stale ones would refill rooms
     // that may no longer exist.
     this.spawnPoints = [];
+    // Corpses are markers over floor contents, and the floor is reloaded
+    // below. The pile survives; the grouping does not.
+    this.corpses.clear();
+    this.nextCorpseCounter = 0;
 
     const itemRows = await prisma.mudItem.findMany({
       select: {
@@ -372,6 +400,8 @@ export class WorldState {
     this.hostilesByRoomId.clear();
     this.nextHostileInstanceCounter = 0;
     this.spawnPoints = [];
+    this.corpses.clear();
+    this.nextCorpseCounter = 0;
     this.items.clear();
     this.roomItems.clear();
     for (const i of items) this.items.set(i.id, i);
@@ -695,6 +725,72 @@ export class WorldState {
 
   liveHostileCount(): number {
     return this.hostileInstances.size;
+  }
+
+  /* ─── Corpses ──────────────────────────────────────────────── */
+
+  /**
+   * Put a defeated player's belongings on the floor and mark the pile.
+   *
+   * Returns undefined when they were carrying nothing — an empty corpse is
+   * a thing to `loot` that yields nothing, which reads as the mechanic being
+   * broken rather than as the victim being poor.
+   */
+  dropCorpse(
+    roomId: string,
+    ownerName: string,
+    items: Array<{ itemId: string; quantity: number }>,
+  ): Corpse | undefined {
+    const contents: Corpse["contents"] = [];
+    for (const entry of items) {
+      const catalog = this.items.get(entry.itemId);
+      if (!catalog || entry.quantity <= 0) continue;
+      this.addItemToRoom(roomId, entry.itemId, entry.quantity, false);
+      contents.push({
+        itemId: entry.itemId,
+        name: catalog.name,
+        quantity: entry.quantity,
+      });
+    }
+    if (contents.length === 0) return undefined;
+    this.nextCorpseCounter += 1;
+    const corpse: Corpse = {
+      id: `corpse-${this.nextCorpseCounter}`,
+      ownerName,
+      roomId,
+      contents,
+    };
+    this.corpses.set(corpse.id, corpse);
+    return corpse;
+  }
+
+  getCorpsesInRoom(roomId: string): Corpse[] {
+    return [...this.corpses.values()].filter((c) => c.roomId === roomId);
+  }
+
+  /**
+   * Find a corpse by the name of whoever it belonged to, or by its id.
+   *
+   * Name-first, because `loot aelric` is what a player types — they saw who
+   * died, not an identifier.
+   */
+  findCorpseInRoom(query: string, roomId: string): Corpse | undefined {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return undefined;
+    const here = this.getCorpsesInRoom(roomId);
+    return (
+      here.find((c) => c.ownerName.toLowerCase() === needle) ??
+      here.find((c) => c.id.toLowerCase() === needle) ??
+      here.find((c) => c.ownerName.toLowerCase().startsWith(needle))
+    );
+  }
+
+  removeCorpse(id: string): void {
+    this.corpses.delete(id);
+  }
+
+  corpseCount(): number {
+    return this.corpses.size;
   }
 
   /* ─── Spawn points and respawn ─────────────────────────────── */

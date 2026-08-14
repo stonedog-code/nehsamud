@@ -44,6 +44,18 @@ function renderRoom(world: WorldState, room: CachedRoom): string[] {
         .join(", ")}.`,
     );
   }
+  // Corpses, before the loose items. A pile with a name on it is the thing
+  // a player is looking for after a fight, and burying it in the general
+  // floor listing would make `loot` something you have to already know
+  // about. Only PVP worlds ever have any.
+  const corpses = world.getCorpsesInRoom(room.id);
+  if (corpses.length > 0) {
+    lines.push(
+      `Fallen here: ${corpses
+        .map((c) => `${c.ownerName}'s belongings`)
+        .join(", ")}.`,
+    );
+  }
   // Items on the floor. Without this line `get` is unusable: a player has no
   // way to learn what is here to pick up, and guessing nouns is not a game
   // mechanic.

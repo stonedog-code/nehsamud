@@ -360,3 +360,162 @@ describe("respawn, through a real socket", () => {
     }
   });
 });
+
+describe("PVP, with two real players and a real database", () => {
+  /** Answer every declared axis with its first selectable option. */
+  async function choicesFor(engine: Harness): Promise<Record<string, string>> {
+    const groups = await engine.prisma.mudCharacterOptionGroup.findMany({
+      orderBy: [{ position: "asc" }, { key: "asc" }],
+      select: {
+        key: true,
+        options: {
+          where: { selectable: true },
+          orderBy: { name: "asc" },
+          select: { slug: true },
+          take: 1,
+        },
+      },
+    });
+    return Object.fromEntries(
+      groups.flatMap((g) => (g.options[0] ? [[g.key, g.options[0].slug]] : [])),
+    );
+  }
+
+  it("one player kills another, loots, and every item moved exactly once", async () => {
+    // The scenario NEH-624's "done when" asks for, and the only place it can
+    // be asserted: two sockets, two rows, and a transfer that has to be
+    // atomic across `mud.inventory` and `mud.room_item`. A unit test can
+    // watch the in-memory arrays change and prove nothing about either table.
+    const engine = await bootEngine("pvp");
+    try {
+      const choices = await choicesFor(engine);
+      const winnerId = newOwnerId();
+      const loserId = newOwnerId();
+      const winnerName = `Bandit${winnerId.slice(0, 6)}`;
+      const loserName = `Mark${loserId.slice(0, 6)}`;
+
+      const winner = await Client.open(engine.url);
+      await winner.auth(winnerId);
+      await winner.exchange({
+        type: "CREATE_CHARACTER",
+        name: winnerName,
+        options: choices,
+      });
+
+      const loser = await Client.open(engine.url);
+      await loser.auth(loserId);
+      await loser.exchange({
+        type: "CREATE_CHARACTER",
+        name: loserName,
+        options: choices,
+      });
+
+      const loserRow = await engine.prisma.mudPlayer.findFirstOrThrow({
+        where: { ownerId: loserId },
+        select: { id: true, roomId: true },
+      });
+
+      // Give the loser something worth taking, and make sure they are
+      // holding it in memory as well as in the row.
+      const item = await engine.prisma.mudItem.findFirstOrThrow({
+        where: { slot: { not: null } },
+        select: { id: true, name: true },
+      });
+      await engine.prisma.mudInventory.create({
+        data: { playerId: loserRow.id, itemId: item.id, quantity: 2 },
+      });
+      loser.close();
+      const rejoined = await Client.open(engine.url);
+      await rejoined.auth(loserId);
+
+      // Both in the same room, then fight until one falls.
+      await winner.type("look");
+      let fell = false;
+      for (let i = 0; i < 60 && !fell; i += 1) {
+        const lines = await winner.type(`attack ${loserName}`);
+        fell = lines.join("\n").includes("collapses");
+      }
+      expect(fell).toBe(true);
+
+      // The loser's rows are empty and the floor holds what they carried —
+      // written in ONE transaction, so there is no state where both are true.
+      const stillCarried = await engine.prisma.mudInventory.count({
+        where: { playerId: loserRow.id },
+      });
+      expect(stillCarried).toBe(0);
+      const onFloor = await engine.prisma.mudRoomItem.findFirst({
+        where: { roomId: loserRow.roomId!, itemId: item.id },
+        select: { quantity: true },
+      });
+      expect(onFloor?.quantity).toBe(2);
+
+      await winner.type(`loot ${loserName}`);
+
+      // EXACTLY ONCE: the winner has both, the loser has none, the floor
+      // has none. Any duplication or loss shows up as one of these three.
+      const winnerRow = await engine.prisma.mudPlayer.findFirstOrThrow({
+        where: { ownerId: winnerId },
+        select: { id: true },
+      });
+      const looted = await engine.prisma.mudInventory.findFirst({
+        where: { playerId: winnerRow.id, itemId: item.id },
+        select: { quantity: true },
+      });
+      expect(looted?.quantity).toBe(2);
+      expect(
+        await engine.prisma.mudInventory.count({
+          where: { playerId: loserRow.id },
+        }),
+      ).toBe(0);
+      expect(
+        await engine.prisma.mudRoomItem.count({
+          where: { roomId: loserRow.roomId!, itemId: item.id },
+        }),
+      ).toBe(0);
+
+      winner.close();
+      rejoined.close();
+    } finally {
+      await engine.close();
+    }
+  });
+
+  it("refuses the whole sequence in pve", async () => {
+    // The same two players, the same commands, a different mode. This is the
+    // assertion the other two builds' promise rests on.
+    const engine = await bootEngine("pve");
+    try {
+      const choices = await choicesFor(engine);
+      const aId = newOwnerId();
+      const bId = newOwnerId();
+      const bName = `Bystander${bId.slice(0, 6)}`;
+
+      const a = await Client.open(engine.url);
+      await a.auth(aId);
+      await a.exchange({
+        type: "CREATE_CHARACTER",
+        name: `Peaceful${aId.slice(0, 6)}`,
+        options: choices,
+      });
+      const b = await Client.open(engine.url);
+      await b.auth(bId);
+      await b.exchange({
+        type: "CREATE_CHARACTER",
+        name: bName,
+        options: choices,
+      });
+
+      expect((await a.type(`attack ${bName}`)).join("\n")).toContain(
+        "here to attack",
+      );
+      expect((await a.type(`loot ${bName}`)).join("\n")).toContain(
+        "Nothing here can be looted",
+      );
+
+      a.close();
+      b.close();
+    } finally {
+      await engine.close();
+    }
+  });
+});
