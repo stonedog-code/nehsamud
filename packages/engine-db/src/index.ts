@@ -33,10 +33,88 @@ export interface CreateMudPrismaClientOptions {
   log?: Array<"info" | "query" | "warn" | "error">;
 }
 
+/**
+ * SSL modes whose meaning is unambiguous, so an operator who wrote one gets
+ * exactly what they asked for.
+ *
+ * `disable` and the `verify-*` family mean the same thing in libpq and in
+ * node-postgres. `require`, `prefer` and `allow` do NOT — see below.
+ */
+const EXPLICIT_SSL_MODES = new Set([
+  "disable",
+  "verify-ca",
+  "verify-full",
+]);
+
+/**
+ * Make a Postgres URL work with the pg driver the way its author meant it.
+ *
+ * THE BUG THIS FIXES. `prisma migrate` and the Prisma *client* reach the
+ * database by different roads: migrations go through Prisma's own engine,
+ * which negotiates TLS by default, and the client goes through
+ * `@prisma/adapter-pg` → node-postgres, which does not. Against RDS — which
+ * refuses unencrypted connections at authentication — that produced a split
+ * where migrations applied cleanly and every query failed with
+ * `P1010: User was denied access on the database`.
+ *
+ * P1010 reads as a permissions problem and is not one. The credential was
+ * always fine: a raw `pg` client with TLS forced on read and wrote happily
+ * with the identical connection string. It cost time in three separate
+ * pieces of work before anyone connected "denied access" to "no TLS".
+ *
+ * THE SECOND TRAP. Adding `?sslmode=require` — the value this project's own
+ * runbook tells you to use, and what libpq means by "encrypt this" — does
+ * not fix it either. node-postgres ≥8.16 reads `sslmode=require` as
+ * *verify the certificate too*, so it fails with `P1011: self-signed
+ * certificate in certificate chain` against the RDS CA, which Node does not
+ * trust out of the box. Its own error text names the escape hatch:
+ * `uselibpqcompat=true`.
+ *
+ * So: restore libpq's meaning for the modes whose meaning changed, and
+ * default to encrypting when the URL says nothing at all.
+ *
+ * WHAT THIS DOES AND DOES NOT GUARANTEE. libpq's `require` encrypts the
+ * connection but does not authenticate the server, so it stops passive
+ * eavesdropping and not an active man-in-the-middle. That is the same
+ * posture the connection strings in Secrets Manager already assume. To
+ * verify properly, set `sslmode=verify-full` explicitly along with the RDS
+ * CA bundle — this function leaves that choice alone.
+ */
+export function normalizeDatabaseUrl(databaseUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(databaseUrl);
+  } catch {
+    // Not a URL we can reason about — hand it back untouched rather than
+    // guessing. The driver will produce a better error than we can.
+    return databaseUrl;
+  }
+
+  // An explicit compatibility choice is never second-guessed.
+  if (url.searchParams.has("uselibpqcompat")) return url.toString();
+
+  const mode = url.searchParams.get("sslmode");
+  if (mode && EXPLICIT_SSL_MODES.has(mode)) return url.toString();
+
+  if (mode) {
+    // require / prefer / allow — the operator meant libpq's meaning.
+    url.searchParams.set("uselibpqcompat", "true");
+    return url.toString();
+  }
+
+  // Nothing said at all. Encrypt: every database this connects to is
+  // reached over a network, and the managed ones refuse plaintext anyway.
+  url.searchParams.set("uselibpqcompat", "true");
+  url.searchParams.set("sslmode", "require");
+  return url.toString();
+}
+
 export function createMudPrismaClient(
   options: CreateMudPrismaClientOptions,
 ): PrismaClient {
-  const adapter = new PrismaPg({ connectionString: options.databaseUrl });
+  const adapter = new PrismaPg({
+    connectionString: normalizeDatabaseUrl(options.databaseUrl),
+  });
   return new PrismaClient({
     adapter,
     log: options.log ?? ["error", "warn"],
