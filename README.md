@@ -91,25 +91,44 @@ without it the engine exits at boot saying the spawn room is missing.
 
 ## Tests
 
-Three tiers, all required:
+Three tiers, all required — and all three now exist. This section listed two
+of them for a while, which is the worse kind of wrong: a documented gate
+nobody implemented reads as a gate everyone believes in.
 
 ```bash
-npm run test:unit    # jest, every workspace
-npm run test:e2e     # playwright against the running app
+npm run test:unit         # jest, every workspace — fakes, no I/O
+npm run test:integration  # a real Postgres, a real server, a real socket
+npm run test:e2e          # playwright against the running app
 npm run typecheck
 npm run build
 ```
 
-The e2e tier is where the accessibility and interaction claims are checked;
-jsdom has no layout engine and would agree with almost anything.
+Each answers something the others structurally cannot:
+
+- **Unit** — does this function do what it says, on every branch. Runs on a
+  fresh clone with nothing installed but node_modules.
+- **Integration** — do the seams hold. A mocked Prisma client agrees with a
+  query the real schema rejects, and stays green through a migration that
+  removed the column underneath; this tier asserts on rows. It **refuses to
+  run without `MUD_DATABASE_URL`** rather than skipping, because a tier that
+  quietly skips itself is the one that stops running and nobody notices. The
+  error message tells you exactly how to stand a database up.
+- **E2E** — can a person actually do it, in a browser. This is where the
+  accessibility and interaction claims are checked; jsdom has no layout
+  engine and would agree with almost anything.
 
 ## Status
 
 The engine moved here from `ElderLink-Solutions/hopper-mud` and this is now
-its only home. The app still plays against a local preview world
-(`apps/web/src/lib/preview-world.ts`) rather than the live engine — that
-wiring is the next step. The preview world is not the game: six rooms, no
-persistence, no monsters, no other players, and the UI says so on the page.
+its only home.
+
+**The app plays the real engine** when one is configured for the build
+(`NEXT_PUBLIC_MUD_WS_URL`): rooms, items and characters come from Postgres,
+and the e2e tier plays through it. A clone with no engine falls back to a
+small in-browser preview world (`apps/web/src/lib/preview-world.ts`) — six
+rooms, no persistence, nothing to fight, no other players. **Which one is
+running is stated on the page**, because a silent fallback is how "the
+engine works" becomes something nobody has actually checked.
 It does honour all ten directions, including the four diagonals the engine's
 parser cannot yet handle.
 

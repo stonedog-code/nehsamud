@@ -24,6 +24,56 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:unit
 
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    # Gated on the fast lane so a broken unit tier does not spend database time.
+    needs: unit
+
+    # A real Postgres, deliberately. This tier exists because a mocked Prisma
+    # client agrees with a query the real schema rejects — running it against
+    # fakes would make it a second, slower copy of the unit tier.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mud
+          POSTGRES_PASSWORD: mud
+          POSTGRES_DB: mud
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      MUD_DATABASE_URL: postgresql://mud:mud@127.0.0.1:5432/mud?sslmode=disable
+      # Shared with the engine's verifier, so the suite exercises the real
+      # token verification rather than a stub that always says yes.
+      JWT_SECRET: integration-secret-not-used-anywhere-real
+      MUD_GAME_MODE: pve
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build --workspace @nehsamud/engine-db
+      - run: npm run build --workspace @nehsamud/engine
+      # See prisma/standalone-bootstrap.sql: the init migration's FK to the
+      # host's `public.user` still makes an empty database impossible to
+      # migrate, even though later migrations drop the constraint.
+      - name: Bootstrap a standalone database
+        run: npm run db:bootstrap --workspace @nehsamud/engine-db
+      - name: Apply migrations
+        run: npm run prisma:migrate:deploy --workspace @nehsamud/engine-db
+      - name: Seed the world
+        run: npm run seed
+      - run: npm run test:integration
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
