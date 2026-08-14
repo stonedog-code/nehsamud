@@ -27,6 +27,7 @@ import { createServer as createHttpServer } from "node:http";
 import { createAiServices } from "./ai/factory.js";
 import { disconnectDb, initDb } from "./db.js";
 import { resolveGameMode } from "./game-mode.js";
+import { listOptionGroups } from "./persistence/player-store.js";
 import {
   createHttpApp,
   listenHttp,
@@ -142,7 +143,9 @@ async function main(): Promise<void> {
     },
   };
 
-  const httpApp = createHttpApp(metrics);
+  // The option source is bound here rather than inside the app, so the app
+  // stays constructible without a database for the transport-only tests.
+  const httpApp = createHttpApp(metrics, () => listOptionGroups(prisma));
   const httpHandle = await listenHttp(httpApp, httpPort);
 
   console.log(

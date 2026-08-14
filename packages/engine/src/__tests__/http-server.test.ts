@@ -122,3 +122,59 @@ describe("HTTP sidecar — /health, /metrics, /capabilities", () => {
     expect(res.body).toEqual({ textGeneration: true, imageGeneration: true });
   });
 });
+
+/* ── /character-options (NEH-713) ──────────────────────────────── */
+
+describe("GET /character-options", () => {
+  const groups = [
+    {
+      key: "race",
+      name: "Race",
+      description: "What you are.",
+      required: true,
+      options: [
+        { slug: "dwarf", name: "Dwarf", description: "Stout." },
+        { slug: "elf", name: "Elf", description: "Quick." },
+      ],
+    },
+  ];
+
+  it("serves what a world offers, so a picker need not hardcode it", async () => {
+    // The whole reason this exists. HopperGuard's creation widget hardcoded
+    // its list and drifted to ten races the engine had never heard of; a
+    // client that can ask cannot drift.
+    const app = createHttpApp(fixedMetricsSource(), async () => groups);
+    const res = await get(app, "/character-options");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ groups });
+  });
+
+  it("answers 503 when the server has no world, NOT an empty list", async () => {
+    // "I cannot tell you" and "this world has no options" are different
+    // facts. A picker that confuses them renders an empty form rather than
+    // an error, and the player sees a broken screen with nothing to click.
+    const res = await get(createHttpApp(fixedMetricsSource()), "/character-options");
+    expect(res.status).toBe(503);
+    expect((res.body as { error: string }).error).toMatch(/no world loaded/i);
+  });
+
+  it("serves an empty list for a pack that declares no axes", async () => {
+    // The care-centre case: you are simply a resident. That is a valid
+    // world, and it must read as 200-with-nothing rather than as a failure.
+    const app = createHttpApp(fixedMetricsSource(), async () => []);
+    const res = await get(app, "/character-options");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ groups: [] });
+  });
+
+  it("never leaks the underlying error to an unauthenticated caller", async () => {
+    // This endpoint is open. A database message here is exactly the internal
+    // detail that must not reach a stranger.
+    const app = createHttpApp(fixedMetricsSource(), async () => {
+      throw new Error("connect ECONNREFUSED 10.0.0.5:5432 as user mud_admin");
+    });
+    const res = await get(app, "/character-options");
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(res.body)).not.toMatch(/ECONNREFUSED|10\.0\.0\.5|mud_admin/);
+  });
+});

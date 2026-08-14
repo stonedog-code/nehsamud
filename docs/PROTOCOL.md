@@ -22,7 +22,9 @@ ws://<host>:22009          # default; MUD_WS_PORT
 ```
 
 There is also a plain HTTP port (`MUD_HTTP_PORT`, default 22010) serving
-`/health`, `/metrics` and `/capabilities`. It is not needed to play.
+`/health`, `/metrics`, `/capabilities` and `/character-options`. None is
+needed to play, but the last one is how a picker UI learns what a character
+can be built from — see §3.
 
 Every frame in both directions is **one JSON object per WebSocket text
 message**, with a `type` field. Unknown fields are ignored; unknown frame
@@ -122,9 +124,31 @@ validation.
 
 **`options` is a map of group key → option slug, and the groups are content,
 not constants.** A fantasy pack declares `race` and `class`; a care-centre pack
-may declare something else, or nothing at all. Do not hardcode them. The
-conversational flow tells you what to answer, or you can read
-`mud.character_option_group` if you have database access.
+may declare something else, or nothing at all. **Do not hardcode them** — a
+client that did drifted to ten races the engine had never heard of.
+
+Ask instead, over plain HTTP, before you open a socket:
+
+```
+GET http://<host>:22010/character-options
+```
+
+```json
+{ "groups": [
+    { "key": "race", "name": "Race", "description": "What you are.",
+      "required": true,
+      "options": [
+        { "slug": "dwarf", "name": "Dwarf", "description": "Stout, stubborn…" }
+      ] } ] }
+```
+
+`groups` may be **empty** — a pack with no creation axes is a valid world, and
+that is a 200, not an error. A **503** means the server has no world loaded and
+genuinely cannot answer; treat the two differently, or an empty form appears
+where an error belongs.
+
+The conversational creation flow asks the same questions one axis at a time,
+if you would rather not fetch anything.
 
 ---
 
