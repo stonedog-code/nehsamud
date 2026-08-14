@@ -12,7 +12,7 @@
  * `game-mode.ts`; the other half lives in `WorldState.spawnHostile`.
  */
 
-import { COMBAT_VERBS } from "../game-mode.js";
+import { COMBAT_VERBS, LOOTING_VERBS } from "../game-mode.js";
 import { withSpan } from "../telemetry/spans.js";
 import { attackHandler } from "./handlers/attack.js";
 import { dropHandler } from "./handlers/drop.js";
@@ -20,6 +20,7 @@ import { getHandler } from "./handlers/get.js";
 import { hideHandler, searchHandler } from "./handlers/conceal.js";
 import { equipHandler, unequipHandler } from "./handlers/equip.js";
 import { helpHandler } from "./handlers/help.js";
+import { lootHandler } from "./handlers/loot.js";
 import { inventoryHandler } from "./handlers/inventory.js";
 import { lookHandler } from "./handlers/look.js";
 import { moveHandler } from "./handlers/move.js";
@@ -73,6 +74,18 @@ const COMBAT_HANDLERS: Record<string, CommandHandler> = {
 };
 
 /**
+ * Verbs that need LOOTING, which is narrower than combat.
+ *
+ * A separate table because the capabilities are separate: PVE has combat and
+ * no looting, so a world can legitimately let you fight a goblin and never
+ * offer to strip a body. Folding this into COMBAT_HANDLERS would give PVE a
+ * verb its mode says it does not have.
+ */
+const LOOTING_HANDLERS: Record<string, CommandHandler> = {
+  loot: lootHandler,
+};
+
+/**
  * The handler table for a mode.
  *
  * Built per call rather than cached: a world's mode is fixed for the
@@ -81,11 +94,13 @@ const COMBAT_HANDLERS: Record<string, CommandHandler> = {
  * entry to hide for no measurable gain.
  */
 export function handlersFor(
-  capabilities: { combat: boolean },
+  capabilities: { combat: boolean; looting?: boolean },
 ): Record<string, CommandHandler> {
-  return capabilities.combat
-    ? { ...BASE_HANDLERS, ...COMBAT_HANDLERS }
-    : { ...BASE_HANDLERS };
+  return {
+    ...BASE_HANDLERS,
+    ...(capabilities.combat ? COMBAT_HANDLERS : {}),
+    ...(capabilities.looting ? LOOTING_HANDLERS : {}),
+  };
 }
 
 /**
@@ -99,6 +114,16 @@ export function handlersFor(
  */
 export const NO_COMBAT_MESSAGE =
   "There is no fighting in this world. Nothing here will harm you.";
+
+/**
+ * What a player is told when they try to loot in a world that does not.
+ *
+ * Distinct from the combat message because the situations are distinct: in
+ * PVE you CAN fight, so "there is no fighting here" would be plainly false
+ * and read as a bug.
+ */
+export const NO_LOOTING_MESSAGE =
+  "Nothing here can be looted. Players keep what they carry in this world.";
 
 /**
  * The dispatcher returns both a response (lines to send to the
@@ -127,6 +152,12 @@ export async function dispatch(ctx: CommandContext): Promise<DispatchResult> {
   const capabilities = ctx.world.capabilities;
   if (COMBAT_VERBS.has(verb) && !capabilities.combat) {
     return { response: reply(NO_COMBAT_MESSAGE), closeSocket: false };
+  }
+  // Looting is refused the same way and for the same reason: the verb is
+  // answered rather than resolved, so the handler is unreachable in a world
+  // whose mode does not permit it.
+  if (LOOTING_VERBS.has(verb) && !capabilities.looting) {
+    return { response: reply(NO_LOOTING_MESSAGE), closeSocket: false };
   }
 
   const handler = handlersFor(capabilities)[verb];

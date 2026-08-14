@@ -25,6 +25,7 @@ import {
   describeAttack,
   resolveAttack,
   type Combatant,
+  type Rng,
 } from "../../combat.js";
 import {
   BASE_ATTRIBUTE,
@@ -36,7 +37,13 @@ import {
   awardExperience,
   xpToNextLevel,
 } from "../../progression.js";
-import type { CommandHandler } from "../types.js";
+import type {
+  Broadcast,
+  CommandHandler,
+  CommandResponse,
+} from "../types.js";
+import type { SessionRegistry, SessionState } from "../../world/session.js";
+import type { WorldState } from "../../world/world-state.js";
 import { equippedArmour, equippedWeapon } from "./equip.js";
 import { reply } from "../types.js";
 
@@ -61,6 +68,7 @@ export const attackHandler: CommandHandler = ({
   session,
   command,
   rng,
+  sessions,
 }) => {
   if (session.defeated) {
     return reply(
@@ -73,6 +81,19 @@ export const attackHandler: CommandHandler = ({
   }
   // Swinging at something ends the rest, whether or not the swing lands.
   session.resting = false;
+
+  // Players first, but ONLY where the mode allows it. In PVE and Exploration
+  // another player is not a target at all, so the name falls through to the
+  // hostile lookup and is answered with "there's no X here" — the same
+  // message as any other miss. Naming them as an unattackable player would
+  // advertise a mechanic this world does not have.
+  if (world.capabilities.playerVersusPlayer && sessions) {
+    const victim = findPlayerTarget(sessions, session, target);
+    if (victim) {
+      return attackPlayer(world, session, victim, rng);
+    }
+  }
+
   const hostile = world.findHostileInRoom(target, session.currentRoomId);
   if (!hostile) {
     return reply(`There's no "${target}" here to attack.`);
@@ -171,3 +192,133 @@ export const attackHandler: CommandHandler = ({
   }
   return reply(...lines);
 };
+
+
+/* ── Player versus player ─────────────────────────────────────────
+ *
+ * PRD-0001: PVP is a MODE, and the mode is resolved at boot from the
+ * environment and attached to the world. So every guard here reads
+ * `world.capabilities`, never anything a client sent — a player cannot ask
+ * to be in a world that permits this.
+ */
+
+/** Another player in this room, addressable by character name. */
+function findPlayerTarget(
+  sessions: SessionRegistry,
+  attacker: SessionState,
+  query: string,
+): SessionState | undefined {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return undefined;
+  return sessions
+    .inRoom(attacker.currentRoomId, attacker.userId)
+    .find(
+      (s) =>
+        s.characterName?.toLowerCase() === needle ||
+        s.characterName?.toLowerCase().startsWith(needle),
+    );
+}
+
+/**
+ * One round against another player.
+ *
+ * Deliberately NOT symmetrical with the hostile path: there is no
+ * counter-attack. A monster swings back because it has no other way to act;
+ * another player does, and hitting them automatically on their behalf would
+ * take the fight out of their hands — including the choice to run. They are
+ * told they were hit and can answer however they like.
+ */
+function attackPlayer(
+  world: WorldState,
+  attacker: SessionState,
+  victim: SessionState,
+  rng: Rng | undefined,
+): CommandResponse {
+  const name = victim.characterName ?? "someone";
+  if (victim.defeated) {
+    return reply(`${name} is already on the ground.`);
+  }
+
+  const roll = rng ?? createRng(Date.now());
+  const me: Combatant = {
+    name: "you",
+    level: attacker.level,
+    baseDamage: baseDamageFor(attacker.sheet?.strength ?? BASE_ATTRIBUTE),
+    weapon: equippedWeapon(attacker.inventory),
+    armour: equippedArmour(attacker.inventory),
+  };
+  const them: Combatant = {
+    name,
+    level: victim.level,
+    baseDamage: baseDamageFor(victim.sheet?.strength ?? BASE_ATTRIBUTE),
+    weapon: equippedWeapon(victim.inventory),
+    // The victim's armour counts. Attacking someone in full plate has to be
+    // different from attacking someone in a shirt, or equipment is only a
+    // mechanic when a monster is on the other end of it.
+    armour: equippedArmour(victim.inventory),
+  };
+
+  const swing = resolveAttack(me, them, roll);
+  victim.currentHp = Math.max(0, victim.currentHp - swing.damage);
+
+  const lines: string[] = [
+    describeAttack("You", name, swing, { secondPerson: true }),
+  ];
+  const broadcasts: Broadcast[] = [
+    {
+      scope: "user",
+      userId: victim.userId,
+      message: swing.hit
+        ? `${attacker.characterName ?? "Someone"} hits you for ${swing.damage}. (${victim.currentHp}/${victim.maxHp} HP.)`
+        : `${attacker.characterName ?? "Someone"} swings at you and misses.`,
+    },
+  ];
+
+  if (victim.currentHp > 0) {
+    lines.push(`${name} has ${victim.currentHp}/${victim.maxHp} HP left.`);
+    return { lines, broadcasts };
+  }
+
+  /* ── The victim is down ────────────────────────────────────── */
+
+  victim.defeated = true;
+  victim.resting = false;
+  // The server writes their row back after this dispatch — see
+  // `persistOtherSessions`. They did not type this command, so nothing else
+  // would.
+  victim.pendingPersist = true;
+
+  // Everything they carried goes on the floor as a marked pile. It is NOT
+  // handed to the winner: PRD-0001 makes looting a choice, and any player
+  // present may make it — including the victim's friend, or the victim
+  // themselves once they are back on their feet.
+  const corpse = world.dropCorpse(
+    victim.currentRoomId,
+    name,
+    victim.inventory.map((e) => ({ itemId: e.itemId, quantity: e.quantity })),
+  );
+  victim.inventory = [];
+
+  lines.push(`${name} collapses.`);
+  broadcasts.push({
+    scope: "user",
+    userId: victim.userId,
+    message: "You collapse. The world goes dark. (Type `look` to recover.)",
+  });
+  if (corpse) {
+    lines.push(
+      `Their belongings spill across the ground. (\`loot ${name}\` to take them.)`,
+    );
+    broadcasts.push({
+      scope: "room",
+      roomId: victim.currentRoomId,
+      message: `${name} falls, and their belongings spill across the ground.`,
+    });
+  }
+
+  // NO EXPERIENCE FOR A KILL. Awarding it would make hunting other players
+  // the fastest way to level, which turns a mode into a farm — and the
+  // people farmed would be the ones with the least reason to stay. What the
+  // winner gets is the loot, which is what the mode is about.
+  return { lines, broadcasts };
+}

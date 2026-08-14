@@ -98,6 +98,17 @@ export interface SessionState {
    * `create <name>` completes).
    */
   sheet?: CharacterSheet;
+  /**
+   * Set when something OTHER than this player's own command changed them,
+   * so the server knows to write their row back.
+   *
+   * PVP is the only thing that does this: being killed empties your
+   * inventory onto the floor while somebody else is typing. Without the
+   * flag, the change would live only in memory until the victim happened to
+   * type something, and a restart in between would hand their belongings
+   * back — duplicating everything the winner had already taken.
+   */
+  pendingPersist?: boolean;
 }
 
 /** The unchanging-per-session half of a character, shown by `statistics`. */

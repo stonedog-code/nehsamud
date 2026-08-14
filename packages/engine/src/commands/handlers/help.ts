@@ -28,6 +28,16 @@ export const helpHandler: CommandHandler = ({ world }) => {
       "  attack <monster>    — strike a monster in the room (one round per command)",
     );
   }
+  if (world.capabilities.playerVersusPlayer) {
+    lines.push(
+      "  attack <player>     — strike another player standing here",
+    );
+  }
+  if (world.capabilities.looting) {
+    lines.push(
+      "  loot <player>       — take what a fallen player left on the ground",
+    );
+  }
 
   lines.push(
     "  get <item>          — pick something up off the floor",

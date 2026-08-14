@@ -46,12 +46,13 @@ import { dispatch } from "./commands/dispatch.js";
 import type { Broadcast } from "./commands/types.js";
 import { parseCommand } from "./commands/parser.js";
 import {
+  applyDeathDrop,
+  saveInventoryAndRoom,
   createPlayer,
   loadPlayer,
   loadInventory,
   listOptionGroups,
   saveInventory,
-  saveRoomItems,
   savePlayerState,
   type CharacterChoice,
   type OptionGroup,
@@ -748,6 +749,13 @@ export class MudWsServer {
         );
       }
       await this.persistAfterDispatch(socket, session);
+      // A PVP kill changes somebody ELSE's row — their HP, and their whole
+      // inventory moving to the floor. `persistAfterDispatch` only ever
+      // saves the player who typed, so without this the victim's belongings
+      // would still be in the database while the world showed them on the
+      // ground: a restart would hand them back and duplicate everything the
+      // winner took.
+      await this.persistOtherSessions(session);
       if (result.closeSocket) {
         socket.close(1000, "client-quit");
       }
@@ -825,6 +833,42 @@ export class MudWsServer {
     }
   }
 
+  /**
+   * Write back sessions the command changed that did not type it.
+   *
+   * Only PVP does this today, and only to a victim. Kept narrow on purpose:
+   * saving every live session on every command would be a write per player
+   * per keystroke, and the general version of this problem wants a dirty
+   * flag rather than a broadcast save.
+   */
+  private async persistOtherSessions(
+    actor: import("./world/session.js").SessionState,
+  ): Promise<void> {
+    if (!this.prisma || !this.world) return;
+    for (const other of this.sessions.inRoom(actor.currentRoomId, actor.userId)) {
+      if (!other.pendingPersist) continue;
+      other.pendingPersist = false;
+      const socket = this.socketByUserId.get(other.userId);
+      const playerId = socket ? this.playerIdBySocket.get(socket) : undefined;
+      if (!playerId) continue;
+      try {
+        await savePlayerState(this.prisma, playerId, other);
+        // The victim's inventory and the floor move together, in ONE
+        // transaction — a crash between them either duplicates what they
+        // were carrying or destroys it, and there is no way to give it back.
+        await applyDeathDrop(
+          this.prisma,
+          playerId,
+          other.currentRoomId,
+          this.world.getAllItemsInRoom(other.currentRoomId),
+        );
+      } catch {
+        // Same reasoning as the main save path: a Postgres hiccup must not
+        // kill anyone's connection. The next save retries.
+      }
+    }
+  }
+
   private async persistAfterDispatch(
     socket: WebSocket,
     session: import("./world/session.js").SessionState,
@@ -834,7 +878,6 @@ export class MudWsServer {
     if (!playerId) return;
     try {
       await savePlayerState(this.prisma, playerId, session);
-      await saveInventory(this.prisma, playerId, session.inventory);
       // Only the room the player is standing in can have changed — `get`,
       // `drop`, `hide` and `search` are the only verbs that move floor
       // contents, and all of them act here. Writing every room would be the
@@ -845,12 +888,19 @@ export class MudWsServer {
       // would delete every hidden one on the next command any player typed.
       // Nothing would report an error; stashed items would simply stop
       // existing.
+      // Inventory and floor together, in one transaction. `loot` moves a
+      // whole pile between the two, and a crash between two separate writes
+      // would duplicate it or destroy it.
       if (this.world) {
-        await saveRoomItems(
+        await saveInventoryAndRoom(
           this.prisma,
+          playerId,
+          session.inventory,
           session.currentRoomId,
           this.world.getAllItemsInRoom(session.currentRoomId),
         );
+      } else {
+        await saveInventory(this.prisma, playerId, session.inventory);
       }
     } catch {
       // Swallowed: a Postgres hiccup shouldn't kill the player's
