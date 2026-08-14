@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { deriveCharacter } from "@nehsamud/engine/character";
 import { CLASSES, RACES } from "@nehsamud/engine/catalog";
 
@@ -9,6 +9,38 @@ import { CLASSES, RACES } from "@nehsamud/engine/catalog";
  * structurally cannot: does the page actually route, does the transcript
  * actually update, can a person actually get from the front page into a world.
  */
+
+/**
+ * Character names are globally unique in the engine, so a name reused across
+ * runs collides with the row the last run created — locally, where the
+ * database persists. CI gets a fresh container each time and would never see
+ * it, which is exactly the kind of failure that only ever appears on someone
+ * else's machine.
+ */
+const RUN = Array.from({ length: 5 }, () =>
+  // Letters only, and lower-case: `validateCharacterName` allows letters plus
+  // single interior hyphens or apostrophes, so a base36 suffix with digits in
+  // it is silently rejected by the form and the test never leaves /create.
+  String.fromCharCode(97 + Math.floor(Math.random() * 26)),
+).join("");
+const uniqueName = (base: string): string => `${base}${RUN}`;
+
+/**
+ * Open a play URL and wait until the socket is actually connected.
+ *
+ * Typing before the connection opens sends the command into a closed socket
+ * and the transcript answers "Not connected to the world." — a real failure
+ * that looks exactly like a broken engine. `data-status` exists on the
+ * transcript for this: it is the component telling the test what it could not
+ * otherwise know.
+ */
+async function enterWorld(page: Page, url: string): Promise<void> {
+  await page.goto(url);
+  await expect(page.getByTestId("transcript")).toHaveAttribute(
+    "data-status",
+    "playing",
+  );
+}
 
 test("the front page offers all three modes on the dev site", async ({
   page,
@@ -70,18 +102,23 @@ test("creating a character and entering the world", async ({ page }) => {
     page.getByText(String(dwarfWarrior.maxHp), { exact: true }),
   ).toBeVisible();
 
-  await page.getByLabel("Character name").fill("Aria");
+  const aria = uniqueName("Aria");
+  await page.getByLabel("Character name").fill(aria);
   await page.getByRole("button", { name: "Enter the world" }).click();
 
   await expect(page).toHaveURL(/\/play\/pve\?/);
-  // The race and class chosen above must survive the trip. They used to be
-  // packed into the query string and then dropped by the play page, so the
-  // greeting named only the character and nothing downstream ever mentioned
-  // the choice again — indistinguishable from it not being recorded.
-  await expect(page.getByTestId("transcript")).toContainText(
-    "Welcome, Aria the Dwarf Warrior.",
-  );
-  await expect(page.getByTestId("transcript")).toContainText("Town Square");
+
+  // From here the assertions are against the REAL ENGINE: the app opens a
+  // WebSocket, authenticates, and creates the character server-side. The race
+  // and class chosen above must survive that whole trip — they used to be
+  // packed into the query string and dropped by the play page, so nothing
+  // downstream ever mentioned them again.
+  const transcript = page.getByTestId("transcript");
+  await expect(transcript).toContainText(`Welcome, ${aria} the Dwarf Warrior!`);
+  // The room, its prose and its occupant all come out of Postgres.
+  await expect(transcript).toContainText("Town Square");
+  await expect(transcript).toContainText("bronze fountain shaped like a dire wolf");
+  await expect(transcript).toContainText("Captain Edred");
 });
 
 test("a tough build previews tougher than a frail one", async ({ page }) => {
@@ -113,15 +150,22 @@ test("the chosen race and class reach the character sheet", async ({ page }) => 
   await page.goto("/play/pve/create");
   await page.getByRole("radio", { name: /Halfling/ }).check();
   await page.getByRole("radio", { name: /Mage/ }).check();
-  await page.getByLabel("Character name").fill("Bryn");
+  const bryn = uniqueName("Bryn");
+  await page.getByLabel("Character name").fill(bryn);
   await page.getByRole("button", { name: "Enter the world" }).click();
 
+  await expect(page.getByTestId("transcript")).toHaveAttribute(
+    "data-status",
+    "playing",
+  );
   const input = page.getByTestId("command-input");
-  await input.fill("stats");
+  await input.fill("statistics");
   await input.press("Enter");
 
+  // `statistics` is the ENGINE's verb, answered from the persisted row —
+  // so this proves the choice reached the database, not just the browser.
   const transcript = page.getByTestId("transcript");
-  await expect(transcript).toContainText("Bryn — level 1");
+  await expect(transcript).toContainText(`${bryn} — level 1`);
   await expect(transcript).toContainText("Halfling Mage");
   // Not the alphabetically-first pairing the server used to substitute.
   await expect(transcript).not.toContainText("Dwarf Warrior");
@@ -162,11 +206,17 @@ test("an invalid name is rejected before entering the world", async ({
   await expect(page).toHaveURL(/\/create$/);
 });
 
-test("walking the world, including a diagonal", async ({ page }) => {
-  await page.goto("/play/pve?name=Aria&race=dwarf&class=warrior");
+test("walking the real world, including a diagonal", async ({ page }) => {
+  // Movement against the engine's map, loaded from Postgres — not the
+  // in-browser stand-in this suite used to walk.
+  await enterWorld(
+    page,
+    `/play/pve?name=${uniqueName("Walker")}&race=dwarf&class=warrior`,
+  );
 
   const transcript = page.getByTestId("transcript");
   const input = page.getByTestId("command-input");
+  await expect(transcript).toContainText("Town Square");
 
   await input.fill("north");
   await input.press("Enter");
@@ -176,22 +226,49 @@ test("walking the world, including a diagonal", async ({ page }) => {
   await input.press("Enter");
   await expect(transcript).toContainText("Town Square");
 
-  // The diagonal the engine's parser cannot currently handle.
-  await input.fill("se");
+  // Out of the town and across the river, which is also the area boundary.
+  for (const step of ["south", "south", "east", "east", "east"]) {
+    await input.fill(step);
+    await input.press("Enter");
+  }
+  await expect(transcript).toContainText("Mindroad Bridge");
+
+  await input.fill("east");
   await input.press("Enter");
-  await expect(transcript).toContainText("Townsmee Market");
+  // Crossing a boundary announces the region — the whole point of areas.
+  await expect(transcript).toContainText("You have entered The Kingsreach Wilds.");
+
+  // Into the heath, where the lattice actually has diagonals. East Bank does
+  // not — an exit only exists where the map says so, which is the point of
+  // walking a real world instead of a stand-in that answers every direction.
+  await input.fill("east");
+  await input.press("Enter");
+  await expect(transcript).toContainText("Heath");
+
+  // The diagonal itself, typeable only since the parser gained all ten
+  // directions and useful only since the wilds were laid out as a lattice
+  // rather than a corridor.
+  await input.fill("ne");
+  await input.press("Enter");
+  await expect(transcript).toContainText("Wolf Cairn");
 });
 
-test("Exploration refuses combat in the running app", async ({ page }) => {
-  // The senior-safe promise, asserted end to end rather than in a unit test.
-  await page.goto("/play/exploration?name=Aria&race=human&class=bard");
+test("the engine answers a verb the preview never had", async ({ page }) => {
+  // A verb that exists only in the engine. Against the in-browser stand-in
+  // this returns "You don't know how to inventory" — so it fails outright if
+  // the app is talking to the preview rather than the real thing, which is
+  // the mistake this whole suite is now guarding against.
+  await enterWorld(
+    page,
+    `/play/pve?name=${uniqueName("Carrier")}&race=human&class=rogue`,
+  );
 
   const input = page.getByTestId("command-input");
-  await input.fill("attack rat");
+  await input.fill("inventory");
   await input.press("Enter");
 
   await expect(page.getByTestId("transcript")).toContainText(
-    "There is no fighting in this world.",
+    "You aren't carrying anything.",
   );
 });
 

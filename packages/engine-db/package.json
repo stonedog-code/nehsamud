@@ -26,7 +26,8 @@
     "prisma:migrate:dev": "prisma migrate dev --schema=prisma/schema.prisma",
     "prisma:migrate:deploy": "prisma migrate deploy --schema=prisma/schema.prisma",
     "prisma:status": "prisma migrate status --schema=prisma/schema.prisma",
-    "prisma:studio": "prisma studio --schema=prisma/schema.prisma"
+    "prisma:studio": "prisma studio --schema=prisma/schema.prisma",
+    "db:bootstrap": "psql \"$MUD_DATABASE_URL\" -v ON_ERROR_STOP=1 -f prisma/standalone-bootstrap.sql"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
