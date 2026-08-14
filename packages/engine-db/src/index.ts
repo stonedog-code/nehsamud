@@ -47,6 +47,21 @@ const EXPLICIT_SSL_MODES = new Set([
 ]);
 
 /**
+ * Hosts that are not reached over a network.
+ *
+ * A connection to loopback never leaves the machine, so there is no wire to
+ * intercept and nothing for TLS to protect. This is not a weakened default —
+ * it is the one case where the default's own reasoning does not apply.
+ */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+function isLoopback(url: URL): boolean {
+  // `URL.hostname` strips the brackets IPv6 literals carry in a URL, so both
+  // spellings are checked rather than assuming which one arrives.
+  return LOOPBACK_HOSTS.has(url.hostname.toLowerCase());
+}
+
+/**
  * Make a Postgres URL work with the pg driver the way its author meant it.
  *
  * THE BUG THIS FIXES. `prisma migrate` and the Prisma *client* reach the
@@ -102,8 +117,26 @@ export function normalizeDatabaseUrl(databaseUrl: string): string {
     return url.toString();
   }
 
-  // Nothing said at all. Encrypt: every database this connects to is
-  // reached over a network, and the managed ones refuse plaintext anyway.
+  // Nothing said at all, and the host is loopback: leave it alone.
+  //
+  // THIS COST TWO PRODUCTION DEPLOYMENTS (NEH-710). The line below used to
+  // apply to every URL, justified as "every database this connects to is
+  // reached over a network" — which is simply not true of the deployment
+  // that matters most. HopperGuard runs this engine as a sidecar beside a
+  // pgbouncer container and points it at `localhost:6432`; that connection
+  // never leaves the container group, and the pooler terminates no TLS. So
+  // the engine demanded encryption nobody could offer, failed at boot with
+  // "The server does not support SSL connections", and Lightsail rolled the
+  // deployment back — twice, for two different people, before anyone read
+  // the container log.
+  //
+  // An operator who writes `sslmode=require` against localhost still gets
+  // it: this only governs the case where nothing was said.
+  if (isLoopback(url)) return url.toString();
+
+  // Nothing said, and the host is somewhere else. Encrypt: the connection
+  // crosses a network, and the managed databases refuse plaintext anyway
+  // (NEH-663).
   url.searchParams.set("uselibpqcompat", "true");
   url.searchParams.set("sslmode", "require");
   return url.toString();
