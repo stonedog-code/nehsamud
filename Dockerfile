@@ -46,11 +46,63 @@ COPY packages/engine/package.json packages/engine/
 COPY packages/engine-db/package.json packages/engine-db/
 COPY apps/web/package.json apps/web/
 
+# Peer dependencies are why this image was 829 MB, and it is not obvious.
+#
+# `@prisma/client` declares PEER dependencies on `prisma` (the CLI) and on
+# `typescript`. npm installs peers automatically, so they arrive as
+# dependencies OF A PRODUCTION PACKAGE and `--omit=dev` cannot touch them.
+# `npm ci --omit=peer` does not help either: `ci` installs the exact tree the
+# lockfile describes and ignores the flag. So they are removed after the fact.
+#
+# The CLI is the expensive part. It drags in `@prisma/studio-core` — Prisma
+# Studio, a *browser UI* — which drags in `react-dom` and `elkjs`. A headless
+# WebSocket service was shipping a React application it can never render.
+#
+# WHY EACH OF THESE IS UNREACHABLE AT RUNTIME:
+#
+#   prisma               the CLI. `generate` and `migrate` run in CI and in
+#                        the build stage, never in the container.
+#   typescript           a peer so the GENERATED client can be typed at
+#                        compile time. Nothing types anything at runtime.
+#   @prisma/studio-core  the Studio browser UI, reachable only from the CLI.
+#   @prisma/dev          CLI dev tooling.
+#   @prisma/engines      ships `schema-engine`, which performs MIGRATIONS.
+#                        This container never migrates; the deploy does that
+#                        separately. Queries go through @prisma/adapter-pg
+#                        and `pg`, which are real dependencies and stay.
+#   react-dom, elkjs     Studio's rendering and graph-layout libraries.
+#   @types/*             TypeScript declaration files. Erased at compile time
+#                        and never executed, so this one is safe by
+#                        definition rather than by argument.
+#
+# ABOUT 20 MB OF STUDIO DEBRIS IS DELIBERATELY LEFT (`fast-check`,
+# `caniuse-lite`, `@visx`, and friends). npm installs flat and does not
+# garbage-collect, so they survive their parent's removal — but proving each
+# one unreachable costs more than the megabytes are worth on an image that
+# is pulled rarely. They are recorded here so the next person knows they
+# were seen and skipped, not missed.
+#
+# PROVEN, NOT ASSUMED, IN TWO PLACES. The `node -e` below fails the BUILD if
+# the generated client can no longer be loaded — the cheap half. The
+# expensive half is that a missing engine binary fails at the first QUERY
+# rather than at boot, so a container from this image is booted against a
+# real Postgres and driven through a whole session before this is called
+# done. Neither check alone is enough: the import can succeed and the first
+# query still die.
 RUN npm ci --omit=dev --no-audit --no-fund \
     --include-workspace-root \
     --workspace @nehsamud/engine \
     --workspace @nehsamud/engine-db \
-    && npm cache clean --force
+    && npm cache clean --force \
+    && rm -rf \
+        node_modules/prisma \
+        node_modules/typescript \
+        node_modules/@prisma/studio-core \
+        node_modules/@prisma/dev \
+        node_modules/@prisma/engines \
+        node_modules/react-dom \
+        node_modules/elkjs \
+        node_modules/@types
 
 # Compiled output only — no sources, no source maps, no dev dependencies.
 # `generated/` carries the Prisma client, so the runtime never runs
@@ -58,6 +110,10 @@ RUN npm ci --omit=dev --no-audit --no-fund \
 COPY --from=build /app/packages/engine/dist packages/engine/dist
 COPY --from=build /app/packages/engine-db/dist packages/engine-db/dist
 COPY --from=build /app/packages/engine-db/generated packages/engine-db/generated
+
+# The client must still LOAD with the CLI and its tree gone. Cheap, and it
+# turns "we deleted too much" from a production incident into a failed build.
+RUN node -e "import('./packages/engine-db/dist/index.js').then(m => { if (typeof m.createMudPrismaClient !== 'function') { throw new Error('engine-db did not export createMudPrismaClient'); } console.log('prisma client loads without the CLI'); })"
 
 # WebSocket, then HTTP (health / metrics / capabilities).
 EXPOSE 22009 22010
