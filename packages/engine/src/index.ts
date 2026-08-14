@@ -100,6 +100,13 @@ export {
 } from "./commands/types.js";
 
 /* ── Transport ────────────────────────────────────────────────── */
+export {
+  RateLimiter,
+  BURST_CAPACITY,
+  COMMANDS_PER_SECOND,
+  throttleMessage,
+  type RateLimitDecision,
+} from "./rate-limit.js";
 export { MudWsServer, type MudWsServerOptions } from "./ws-server.js";
 export { createHttpApp, listenHttp } from "./http-server.js";
 export {

@@ -349,7 +349,21 @@ work twice, across a repository boundary.
   also a denial-of-service surface pointed at every other player in the world.
   *Leaning: client-side for v1, server-side behind a hard sandbox later.*
 
-  **Still open — and no longer blocking.** The language and its runner
+  **ANSWERED: client-side.** Scripts run in whatever client the player
+  brings — including third-party apps written in C# or Python — driving the
+  same WebSocket frames a person's client sends. The contract is therefore
+  the **wire protocol**, documented in `docs/PROTOCOL.md`, not a package.
+
+  That decision moves R21/R22 somewhere specific. The `ScriptRunner` budget
+  governs only scripts the engine itself runs, and a client in another
+  language inherits none of it — so the defence that matters is a
+  **server-side command rate limit** no client can opt out of: 5/second
+  sustained, 20 burst, per connection. See `packages/engine/src/rate-limit.ts`.
+
+  Server-side *execution* — scripts running while a player is offline —
+  remains unbuilt and is a separate question. Original note follows.
+
+  The language and its runner
   (§4.5) are host-agnostic by construction: the runner hands out one command
   and waits for the resulting state, so a browser driving that loop over the
   WebSocket and the engine driving it in-process are the same loop. Whichever
