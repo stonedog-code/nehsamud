@@ -1,0 +1,85 @@
+# Build the container image on the PRs that can break it.
+#
+# `ci.yml` runs three tiers and none of them builds `Dockerfile`, so until
+# now a change that broke the image surfaced at deploy — late, and in the one
+# place where late is most expensive (NEH-694).
+#
+# It matters more since NEH-637 stripped the Prisma CLI, Studio and their
+# tree out of the runtime stage. That deletion is guarded by an assertion
+# INSIDE the Dockerfile, which turns "we deleted too much" into a red build
+# rather than a production incident:
+#
+#     RUN node -e "import('./packages/engine-db/dist/index.js')…"
+#
+# A guard that only runs at deploy is a guard that fires after the thing it
+# was protecting has already been decided.
+#
+# ## Why a separate workflow rather than a job in ci.yml
+#
+# GitHub has no per-job `paths:` filter — only per-workflow. The Dockerfile
+# runs `npm ci` twice (build and runtime stages) plus two workspace builds,
+# so folding this into `ci.yml` would mean either paying it on every PR, or
+# gating it on an `if:` that still spins up a runner to decide. A separate
+# file gets the filter for free.
+#
+# ## What the filter can and cannot do
+#
+# The paths below are what can actually change the image: the recipe, the
+# ignore list that decides what it copies, the dependency tree it installs,
+# and the workspace manifests that decide which packages exist.
+#
+# A change that breaks the image without touching any of them is not caught
+# until deploy — which is exactly where it was caught before this existed.
+# The filter can only improve on the status quo; it cannot make anything
+# later than it already was.
+#
+# ## Do not make this a REQUIRED check
+#
+# It does not run on most PRs, and a required check that never starts leaves
+# a PR pending forever. See NEH-648 for branch protection.
+name: Image
+
+# The two path lists are duplicated rather than shared by a YAML anchor:
+# GitHub Actions does not support anchors or aliases in workflow files, and a
+# workflow using one fails to parse rather than falling back. Keep them in
+# step.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "package-lock.json"
+      - "package.json"
+      - "packages/*/package.json"
+      - "apps/*/package.json"
+      - ".github/workflows/image.yml"
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "package-lock.json"
+      - "package.json"
+      - "packages/*/package.json"
+      - "apps/*/package.json"
+      - ".github/workflows/image.yml"
+
+jobs:
+  build:
+    name: Container Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # Built, not pushed. The point is the in-Dockerfile assertion running
+      # at review time; nothing here needs a registry.
+      #
+      # The GitHub Actions layer cache means a PR touching only the runtime
+      # stage does not re-run `npm ci` from scratch.
+      - name: Build the runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
