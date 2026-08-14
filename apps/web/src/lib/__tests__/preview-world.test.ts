@@ -9,7 +9,7 @@ import {
   type PreviewCharacter,
   type PreviewState,
 } from "../preview-world";
-import { deriveStats, findClass, findRace } from "../catalog";
+import { deriveStats, resolveSelection } from "../catalog";
 
 function run(state: PreviewState, input: string, mode = "pve" as const) {
   return applyCommand(state, input, mode);
@@ -21,17 +21,11 @@ function character(
   raceKey = "dwarf",
   classKey = "mage",
 ): PreviewCharacter {
-  const race = findRace(raceKey);
-  const characterClass = findClass(classKey);
-  if (!race || !characterClass) {
+  const selection = resolveSelection({ race: raceKey, class: classKey });
+  if (!selection) {
     throw new Error(`test fixture: unknown ${raceKey}/${classKey}`);
   }
-  return {
-    name,
-    race,
-    characterClass,
-    stats: deriveStats(race, characterClass),
-  };
+  return { name, selection, stats: deriveStats(selection) };
 }
 
 const start = () => initialState(character());
@@ -240,7 +234,7 @@ describe("stats", () => {
   });
 
   it("reports the stats those choices derive", () => {
-    const dwarfMage = deriveStats(findRace("dwarf")!, findClass("mage")!);
+    const dwarfMage = character().stats;
     const text = run(start(), "stats")
       .lines.map((l) => l.text)
       .join("\n");

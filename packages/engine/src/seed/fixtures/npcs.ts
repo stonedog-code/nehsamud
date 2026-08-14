@@ -18,7 +18,7 @@ export const NPCS: NpcFixture[] = [
       "The keeper of The Quiet Bed. Sharp-eyed, soft-voiced, and not to be crossed.",
     roomEnumKey: "TOWNSMEE_INN",
     pronoun: "she",
-    alignment: "good",
+    tags: ["good"],
     intelligenceMode: "canned",
     dialogLines: [
       "A room for the night? Two coppers, no questions.",
@@ -34,7 +34,7 @@ export const NPCS: NpcFixture[] = [
       "A square-shouldered woman with flour on her apron, polishing a tankard at the long bar.",
     roomEnumKey: "TOWNSMEE_TAVERN",
     pronoun: "she",
-    alignment: "neutral",
+    tags: ["neutral"],
     intelligenceMode: "canned",
     dialogLines: [
       "Stew's hot, ale's cold. What'll it be?",
@@ -50,7 +50,7 @@ export const NPCS: NpcFixture[] = [
       "A ruddy-cheeked trader behind a crate stacked with goods.",
     roomEnumKey: "TOWNSMEE_MARKET",
     pronoun: "he",
-    alignment: "neutral",
+    tags: ["neutral"],
     intelligenceMode: "canned",
     dialogLines: [
       "Sword, shield, or supplies? I've got all three at fair prices.",
@@ -66,7 +66,7 @@ export const NPCS: NpcFixture[] = [
       "A jovial round-faced man who somehow knows your name before you give it.",
     roomEnumKey: "TOWNSMEE_INN",
     pronoun: "he",
-    alignment: "good",
+    tags: ["good"],
     intelligenceMode: "canned",
     dialogLines: [
       "Welcome, welcome! First time in Townsmee?",
@@ -82,7 +82,7 @@ export const NPCS: NpcFixture[] = [
       "A weatherworn soldier in dented plate, leaning on the haft of a halberd.",
     roomEnumKey: "TOWNSMEE_TOWNSQUARE",
     pronoun: "he",
-    alignment: "lawful_good",
+    tags: ["lawful_good"],
     intelligenceMode: "canned",
     dialogLines: [
       "Behave yourself in town.",
@@ -98,7 +98,7 @@ export const NPCS: NpcFixture[] = [
       "A tall woman with a star pinned to a leather coat. Her hand never strays far from her side-arm.",
     roomEnumKey: "TOWNSMEE_SHERIFF",
     pronoun: "she",
-    alignment: "lawful_good",
+    tags: ["lawful_good"],
     intelligenceMode: "canned",
     dialogLines: [
       "State your business.",
@@ -114,7 +114,7 @@ export const NPCS: NpcFixture[] = [
       "Broad-shouldered, soot-stained, with arms that could lift a horse and probably have.",
     roomEnumKey: "TOWNSMEE_BLACKSMITH",
     pronoun: "he",
-    alignment: "neutral",
+    tags: ["neutral"],
     intelligenceMode: "canned",
     dialogLines: [
       "What needs forging?",
@@ -130,7 +130,7 @@ export const NPCS: NpcFixture[] = [
       "A young woman in a fine but travel-worn dress, watching everything with calm attention.",
     roomEnumKey: "TOWNSMEE_INN",
     pronoun: "she",
-    alignment: "good",
+    tags: ["good"],
     intelligenceMode: "canned",
     dialogLines: [
       "Don't bow. Please. I came here to be left alone.",
@@ -147,7 +147,7 @@ export const NPCS: NpcFixture[] = [
       "with steady hands.",
     roomEnumKey: "TOWNSMEE_INN",
     pronoun: "he",
-    alignment: "neutral",
+    tags: ["neutral"],
     intelligenceMode: "canned",
     dialogLines: [
       "Met a goblin once that took six arrows. You always carry six? Carry seven.",
@@ -164,7 +164,7 @@ export const NPCS: NpcFixture[] = [
       "and shaking.",
     roomEnumKey: "TOWNSMEE_SHERIFF",
     pronoun: "she",
-    alignment: "good",
+    tags: ["good"],
     intelligenceMode: "canned",
     dialogLines: [
       "They took him! They TOOK him! Why won't anyone DO anything?",

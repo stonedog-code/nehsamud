@@ -13,10 +13,10 @@
  *   3. Movement     — `north` walks the player into the adjacent
  *                     room and auto-looks; session.currentRoomId
  *                     persists across the dispatch.
- *   4. Combat       — `attack <monster>` drops the monster, awards
- *                     XP, and despawns the monster from the room.
+ *   4. Combat       — `attack <monster>` drops the hostile, awards
+ *                     XP, and despawns the hostile from the room.
  *   5. Multi-user   — two clients on the same MudWsServer share the
- *                     same world (same monster HP, same NPC catalog).
+ *                     same world (same hostile HP, same NPC catalog).
  *                     Each client has its own session, its own player
  *                     row, and its own AUTH userId — but they all
  *                     mutate the SAME world state.
@@ -35,7 +35,7 @@ import WebSocket from "ws";
 
 import { createHttpApp } from "../http-server.js";
 import type {
-  CachedMonster,
+  CachedHostile,
   CachedNpc,
   CachedRoom,
 } from "../world/world-state.js";
@@ -94,13 +94,13 @@ const NPC_ZOFIA: CachedNpc = {
   description: "Innkeeper.",
   roomId: "room-inn",
   pronoun: "she",
-  alignment: "good",
+  tags: ["good"],
   intelligenceMode: "canned",
   dialogLines: ["A room for the night?"],
   interests: ["lodging"],
 };
-const MON_GOBLIN: CachedMonster = {
-  id: "monster-goblin",
+const MON_GOBLIN: CachedHostile = {
+  id: "hostile-goblin",
   slug: "goblin",
   name: "Goblin",
   description: "Wiry green creature.",
@@ -108,8 +108,7 @@ const MON_GOBLIN: CachedMonster = {
   baseHp: 15, // 3 hits @ PLAYER_BASE_DAMAGE=5 to kill — exact and easy to assert.
   baseDamage: 1, // low enough that the player survives the full kill sequence.
   experience: 20,
-  alignment: "evil",
-  mobType: "humanoid",
+  tags: ["humanoid", "evil"],
 };
 
 function buildWorld(): WorldState {
@@ -128,7 +127,7 @@ function buildWorld(): WorldState {
  */
 interface FakePlayerRow {
   id: string;
-  userId: string;
+  ownerId: string;
   name: string;
   roomId: string | null;
   currentHp: number;
@@ -142,9 +141,39 @@ interface FakePlayerRow {
   constitution: number;
   dexterity: number;
   luck: number;
-  race: { name: string };
-  class: { name: string };
+  options: Array<{
+    group: { key: string; name: string; position: number };
+    option: { slug: string; name: string };
+  }>;
 }
+
+/** The two axes this fake world declares, and what is on each. */
+const FAKE_GROUPS = [
+  {
+    id: "group-race",
+    key: "race",
+    name: "Race",
+    description: "",
+    required: true,
+    position: 0,
+    options: [
+      { slug: "dwarf", name: "Dwarf", description: "" },
+      { slug: "human", name: "Human", description: "" },
+    ],
+  },
+  {
+    id: "group-class",
+    key: "class",
+    name: "Class",
+    description: "",
+    required: true,
+    position: 1,
+    options: [
+      { slug: "mage", name: "Mage", description: "" },
+      { slug: "warrior", name: "Warrior", description: "" },
+    ],
+  },
+];
 
 interface FakePrisma {
   mudPlayer: {
@@ -152,8 +181,8 @@ interface FakePrisma {
     create: jest.Mock;
     update: jest.Mock;
   };
-  mudRace: { findMany: jest.Mock; findUnique: jest.Mock };
-  mudClass: { findMany: jest.Mock; findUnique: jest.Mock };
+  mudCharacterOptionGroup: { findMany: jest.Mock };
+  mudCharacterOption: { findUnique: jest.Mock };
   /** Table of rows for test assertions. */
   _rows: Map<string, FakePlayerRow>;
 }
@@ -161,14 +190,14 @@ interface FakePrisma {
 function fakePrisma(): FakePrisma {
   const rows = new Map<string, FakePlayerRow>();
   let nextId = 1;
-  const findFirst = jest.fn(async (args: { where: { userId: string } }) => {
-    return rows.get(args.where.userId) ?? null;
+  const findFirst = jest.fn(async (args: { where: { ownerId: string } }) => {
+    return rows.get(args.where.ownerId) ?? null;
   });
   const create = jest.fn(
     async (args: { data: Record<string, unknown> }) => {
       const row: FakePlayerRow = {
         id: `player-${nextId++}`,
-        userId: args.data.userId as string,
+        ownerId: args.data.ownerId as string,
         name: args.data.name as string,
         roomId: args.data.roomId as string | null,
         currentHp: args.data.currentHp as number,
@@ -185,10 +214,18 @@ function fakePrisma(): FakePrisma {
       constitution: 10,
       dexterity: 10,
       luck: 10,
-      race: { name: "Human" },
-      class: { name: "Fighter" },
+      options: [
+        {
+          group: { key: "race", name: "Race", position: 0 },
+          option: { slug: "human", name: "Human" },
+        },
+        {
+          group: { key: "class", name: "Class", position: 1 },
+          option: { slug: "warrior", name: "Warrior" },
+        },
+      ],
       };
-      rows.set(row.userId, row);
+      rows.set(row.ownerId, row);
       return row;
     },
   );
@@ -215,26 +252,32 @@ function fakePrisma(): FakePrisma {
   );
   return {
     mudPlayer: { findFirst, create, update },
-    mudRace: {
-      findMany: jest.fn(async () => [
-        { slug: "dwarf", name: "Dwarf" },
-        { slug: "human", name: "Human" },
-      ]),
-      findUnique: jest.fn(async (args: { where: { slug: string } }) =>
-        ["dwarf", "human"].includes(args.where.slug)
-          ? { id: `race-${args.where.slug}`, playable: true }
-          : null,
-      ),
+    mudCharacterOptionGroup: {
+      findMany: jest.fn(async () => FAKE_GROUPS),
     },
-    mudClass: {
-      findMany: jest.fn(async () => [
-        { slug: "mage", name: "Mage" },
-        { slug: "warrior", name: "Warrior" },
-      ]),
-      findUnique: jest.fn(async (args: { where: { slug: string } }) =>
-        ["mage", "warrior"].includes(args.where.slug)
-          ? { id: `class-${args.where.slug}`, playable: true }
-          : null,
+    mudCharacterOption: {
+      findUnique: jest.fn(
+        async (args: {
+          where: { groupId_slug: { groupId: string; slug: string } };
+        }) => {
+          const { groupId, slug } = args.where.groupId_slug;
+          const group = FAKE_GROUPS.find((g) => g.id === groupId);
+          const option = group?.options.find((o) => o.slug === slug);
+          return option
+            ? {
+                id: `option-${slug}`,
+                slug,
+                selectable: true,
+                strengthMod: 0,
+                intelligenceMod: 0,
+                wisdomMod: 0,
+                charismaMod: 0,
+                constitutionMod: 0,
+                dexterityMod: 0,
+                luckMod: 0,
+              }
+            : null;
+        },
       ),
     },
     _rows: rows,
@@ -331,7 +374,7 @@ async function authAndCreate(
  * Drain incoming frames until no message arrives for `idleMs`.
  * Robust against varying line counts (combat outcomes shift between
  * 3 and 5 SERVER_MESSAGE lines depending on whether the swing kills
- * the monster, lands a counter-attack, etc.).
+ * the hostile, lands a counter-attack, etc.).
  */
 function drainUntilSilent(sock: WebSocket, idleMs = 50): Promise<string[]> {
   return new Promise((resolve) => {
@@ -394,7 +437,7 @@ beforeEach(async () => {
   // Spawn the goblin in the lower quarter so the combat tests can
   // walk a player into it without disturbing the spawn-room renders
   // the other tests rely on.
-  world.spawnMonster("goblin", ROOM_LOWER.id);
+  world.spawnHostile("goblin", ROOM_LOWER.id);
   booted = await bootWsOnly(world);
 });
 afterEach(async () => {
@@ -479,13 +522,17 @@ describe("smoke / 2: user creation on AUTH", () => {
     const createArgs = booted.prisma.mudPlayer.create.mock.calls[0]?.[0] as {
       data: Record<string, unknown>;
     };
-    expect(createArgs.data.userId).toBe("user-alpha2");
+    expect(createArgs.data.ownerId).toBe("user-alpha2");
     expect(createArgs.data.name).toBe("Aelric");
     expect(createArgs.data.roomId).toBe(ROOM_SQUARE.id);
     // The whole point: what the player picked is what gets written. Before
     // this, both ids were whatever came first alphabetically.
-    expect(createArgs.data.raceId).toBe("race-dwarf");
-    expect(createArgs.data.classId).toBe("class-mage");
+    expect(createArgs.data.options).toEqual({
+      create: [
+        { groupId: "group-race", optionId: "option-dwarf" },
+        { groupId: "group-class", optionId: "option-mage" },
+      ],
+    });
 
     // The character lands at the spawn and auto-looks the town square.
     expect(lines.some((l) => l.includes("Aelric"))).toBe(true);
@@ -503,8 +550,7 @@ describe("smoke / 2: user creation on AUTH", () => {
       JSON.stringify({
         type: "CREATE_CHARACTER",
         name: "Bryn",
-        race: "human",
-        class: "warrior",
+        options: { race: "human", class: "warrior" },
       }),
     );
     const lines = parseMessages(await drainUntilSilent(client));
@@ -514,8 +560,12 @@ describe("smoke / 2: user creation on AUTH", () => {
       data: Record<string, unknown>;
     };
     expect(createArgs.data.name).toBe("Bryn");
-    expect(createArgs.data.raceId).toBe("race-human");
-    expect(createArgs.data.classId).toBe("class-warrior");
+    expect(createArgs.data.options).toEqual({
+      create: [
+        { groupId: "group-race", optionId: "option-human" },
+        { groupId: "group-class", optionId: "option-warrior" },
+      ],
+    });
     expect(lines.some((l) => l === ROOM_SQUARE.name)).toBe(true);
 
     client.close();
@@ -534,7 +584,9 @@ describe("smoke / 2: user creation on AUTH", () => {
 
     client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "wombat" }));
     const rejected = parseMessages(await drainUntilSilent(client));
-    expect(rejected.some((l) => l.includes("isn't one of the races"))).toBe(true);
+    expect(
+      rejected.some((l) => l.includes("isn't one of the race choices")),
+    ).toBe(true);
     expect(booted.prisma.mudPlayer.create).not.toHaveBeenCalled();
 
     client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "dwarf" }));
@@ -609,7 +661,7 @@ describe("smoke / 4: combat", () => {
     const arrival = parseMessages(await drainUntilSilent(client));
     expect(arrival.some((l) => l === ROOM_LOWER.name)).toBe(true);
     expect(arrival.some((l) => l.includes("Goblin"))).toBe(true);
-    expect(booted.world.liveMonsterCount()).toBe(1);
+    expect(booted.world.liveHostileCount()).toBe(1);
 
     // Three swings @ PLAYER_BASE_DAMAGE=5 against baseHp=15 kills.
     for (let i = 0; i < 3; i += 1) {
@@ -624,8 +676,8 @@ describe("smoke / 4: combat", () => {
       }
     }
 
-    // Monster despawned.
-    expect(booted.world.liveMonsterCount()).toBe(0);
+    // Hostile despawned.
+    expect(booted.world.liveHostileCount()).toBe(0);
 
     // Player row carries the XP gain.
     const row = booted.prisma._rows.get("user-epsilon");
@@ -679,7 +731,7 @@ describe("smoke / 4: combat", () => {
 /* ── 5. Multiple users share world state ─────────────────────────── */
 
 describe("smoke / 5: multiple users share world state", () => {
-  it("two clients attacking the same monster see the cumulative damage", async () => {
+  it("two clients attacking the same hostile see the cumulative damage", async () => {
     const userA = await openClient(booted.url);
     const userB = await openClient(booted.url);
     await Promise.all([
@@ -695,7 +747,7 @@ describe("smoke / 5: multiple users share world state", () => {
     // Damage varies and a blow can miss, so the exact numbers this used to
     // assert are no longer the point — and pinning them would assert the
     // ABSENCE of variable combat. What must hold is the shared-world
-    // invariant: B's swing sees A's damage, never a fresh monster.
+    // invariant: B's swing sees A's damage, never a fresh hostile.
     const remainingHp = (lines: string[]): number | undefined => {
       for (const line of lines) {
         const m = /has (\d+)\/(\d+) HP left/.exec(line);
@@ -718,8 +770,8 @@ describe("smoke / 5: multiple users share world state", () => {
     userB.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "attack goblin" }));
     const bHp = remainingHp(parseMessages(await drainUntilSilent(userB)));
 
-    // B either sees the monster at or below where A left it, or kills it.
-    // What it must never see is the monster back at full health.
+    // B either sees the hostile at or below where A left it, or kills it.
+    // What it must never see is the hostile back at full health.
     if (bHp !== undefined) {
       expect(bHp).toBeLessThanOrEqual(aHp!);
       expect(bHp).toBeLessThan(MON_GOBLIN.baseHp);

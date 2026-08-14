@@ -1,18 +1,26 @@
 /**
- * Monster catalog. Spawned by Phase 5's mob-spawner; each fight
- * references this row for base stats and the alignment/mobType
- * axes that the combat AI keys off.
+ * The things in THIS pack that can be fought.
  *
- * Ported from the original Python MUD (nehsa-net/websocket-mud), source_data/mobs_monsters.py.
- * Focused-rewrite subset: the 8 monster slugs that the Python
- * world's encounter tables actually rolled. The other 12 monster
- * definitions in the Python file were unreachable from any spawn
- * point.
+ * "Hostile" rather than "hostile" because the engine serves worlds that have
+ * no hostiles in them: what a thing IS belongs to the pack, and the only
+ * mechanic here is that a player can attack it. A world with nothing to
+ * fight — the care-centre one runs Exploration mode — simply ships none.
+ *
+ * Ported from the original Python MUD (nehsa-net/websocket-mud), source_data/mobs_hostiles.py.
+ * Focused-rewrite subset: the 8 slugs that the Python world's encounter
+ * tables actually rolled. The other 12 definitions in the Python file were
+ * unreachable from any spawn point.
+ *
+ * `tags` replaced two enum columns, `alignment` and `mobType`. The engine
+ * reads neither and never did — the comment claiming a combat AI keyed off
+ * them described something that does not exist. They are kept as tags
+ * because they describe this pack's content usefully, not because any rule
+ * consults them.
  */
 
-import type { MonsterFixture } from "./types.js";
+import type { HostileFixture } from "./types.js";
 
-export const MONSTERS: MonsterFixture[] = [
+export const HOSTILES: HostileFixture[] = [
   {
     slug: "goblin",
     name: "Goblin",
@@ -21,8 +29,7 @@ export const MONSTERS: MonsterFixture[] = [
     baseHp: 8,
     baseDamage: 2,
     experience: 20,
-    alignment: "evil",
-    mobType: "humanoid",
+    tags: ["humanoid", "evil"],
   },
   {
     slug: "giant-rat",
@@ -33,8 +40,7 @@ export const MONSTERS: MonsterFixture[] = [
     baseHp: 5,
     baseDamage: 1,
     experience: 10,
-    alignment: "neutral",
-    mobType: "beast",
+    tags: ["beast", "neutral"],
   },
   {
     slug: "wolf",
@@ -44,8 +50,7 @@ export const MONSTERS: MonsterFixture[] = [
     baseHp: 14,
     baseDamage: 3,
     experience: 35,
-    alignment: "neutral",
-    mobType: "beast",
+    tags: ["beast", "neutral"],
   },
   {
     slug: "skeleton",
@@ -57,8 +62,7 @@ export const MONSTERS: MonsterFixture[] = [
     baseHp: 18,
     baseDamage: 4,
     experience: 45,
-    alignment: "evil",
-    mobType: "undead",
+    tags: ["undead", "evil"],
   },
   {
     slug: "zombie",
@@ -69,8 +73,7 @@ export const MONSTERS: MonsterFixture[] = [
     baseHp: 22,
     baseDamage: 3,
     experience: 40,
-    alignment: "evil",
-    mobType: "undead",
+    tags: ["undead", "evil"],
   },
   {
     slug: "bandit",
@@ -81,8 +84,7 @@ export const MONSTERS: MonsterFixture[] = [
     baseHp: 20,
     baseDamage: 5,
     experience: 55,
-    alignment: "evil",
-    mobType: "humanoid",
+    tags: ["humanoid", "evil"],
   },
   {
     slug: "ogre",
@@ -93,8 +95,7 @@ export const MONSTERS: MonsterFixture[] = [
     baseHp: 45,
     baseDamage: 8,
     experience: 120,
-    alignment: "evil",
-    mobType: "humanoid",
+    tags: ["humanoid", "evil"],
   },
   {
     slug: "fire-elemental",
@@ -105,7 +106,6 @@ export const MONSTERS: MonsterFixture[] = [
     baseHp: 40,
     baseDamage: 10,
     experience: 180,
-    alignment: "neutral",
-    mobType: "elemental",
+    tags: ["elemental", "neutral"],
   },
 ];

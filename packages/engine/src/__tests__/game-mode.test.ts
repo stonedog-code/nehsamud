@@ -3,7 +3,7 @@
  *
  * The claim under test is narrow and worth stating plainly: in a world whose
  * mode is `exploration`, there is no way to reach combat. Not "the verb is
- * undocumented", not "the UI hides the button" — the monster cannot be
+ * undocumented", not "the UI hides the button" — the hostile cannot be
  * created, the handler is not in the table, and no combat span is opened.
  *
  * Each of those is asserted separately, because they are independent guards
@@ -38,7 +38,7 @@ import {
 import { initTelemetry } from "../telemetry/setup.js";
 import type { SessionState } from "../world/session.js";
 import { WorldState } from "../world/world-state.js";
-import type { CachedMonster, CachedRoom } from "../world/world-state.js";
+import type { CachedHostile, CachedRoom } from "../world/world-state.js";
 
 const SQUARE: CachedRoom = {
   id: "room-square",
@@ -51,7 +51,7 @@ const SQUARE: CachedRoom = {
   imageName: null,
 };
 
-const GOBLIN: CachedMonster = {
+const GOBLIN: CachedHostile = {
   id: "mon-goblin",
   slug: "goblin",
   name: "goblin",
@@ -60,8 +60,7 @@ const GOBLIN: CachedMonster = {
   baseHp: 12,
   baseDamage: 3,
   experience: 20,
-  alignment: "evil",
-  mobType: "humanoid",
+  tags: ["humanoid", "evil"],
 };
 
 function buildWorld(mode: GameMode): WorldState {
@@ -87,9 +86,9 @@ function sessionAt(roomId: string): SessionState {
 /* ── The capability table ─────────────────────────────────────── */
 
 describe("mode capabilities", () => {
-  it("gives exploration no monsters, no combat, no PVP, no looting", () => {
+  it("gives exploration no hostiles, no combat, no PVP, no looting", () => {
     expect(MODE_CAPABILITIES.exploration).toEqual({
-      monsters: false,
+      hostiles: false,
       combat: false,
       playerVersusPlayer: false,
       looting: false,
@@ -115,10 +114,10 @@ describe("mode capabilities", () => {
     }
   });
 
-  it("never enables combat without monsters", () => {
+  it("never enables combat without hostiles", () => {
     for (const mode of GAME_MODES) {
       const caps = capabilitiesFor(mode);
-      if (caps.combat) expect(caps.monsters).toBe(true);
+      if (caps.combat) expect(caps.hostiles).toBe(true);
     }
   });
 
@@ -142,7 +141,7 @@ describe("mode capabilities", () => {
 
 describe("resolveGameMode", () => {
   it("defaults to the most restrictive mode when unset", () => {
-    // A deployment that forgets to configure a mode must not get monsters.
+    // A deployment that forgets to configure a mode must not get hostiles.
     expect(resolveGameMode({})).toBe("exploration");
     expect(DEFAULT_GAME_MODE).toBe("exploration");
   });
@@ -161,7 +160,7 @@ describe("resolveGameMode", () => {
   });
 
   it("throws on an unrecognised value rather than falling back", () => {
-    // A silent fallback either strands a PVE host with no monsters or — far
+    // A silent fallback either strands a PVE host with no hostiles or — far
     // worse in the other direction — hands a mode to a host that did not ask
     // for it. Failing the boot puts the typo in front of the operator.
     expect(() => resolveGameMode({ [GAME_MODE_ENV]: "pvpp" })).toThrow(
@@ -189,30 +188,30 @@ describe("isGameMode", () => {
 
 /* ── Guard 1: the spawner ─────────────────────────────────────── */
 
-describe("WorldState — monsters are gated on the mode", () => {
+describe("WorldState — hostiles are gated on the mode", () => {
   it("defaults to exploration when no mode is given", () => {
     expect(new WorldState().mode).toBe("exploration");
-    expect(new WorldState().capabilities.monsters).toBe(false);
+    expect(new WorldState().capabilities.hostiles).toBe(false);
   });
 
-  it("refuses to spawn a monster in exploration", () => {
+  it("refuses to spawn a hostile in exploration", () => {
     const world = buildWorld("exploration");
-    expect(() => world.spawnMonster("goblin", SQUARE.id)).toThrow(
+    expect(() => world.spawnHostile("goblin", SQUARE.id)).toThrow(
       /refused .* "exploration" mode/,
     );
   });
 
   it("leaves the room empty after a refused spawn", () => {
     const world = buildWorld("exploration");
-    expect(() => world.spawnMonster("goblin", SQUARE.id)).toThrow();
-    expect(world.getMonstersInRoom(SQUARE.id)).toEqual([]);
+    expect(() => world.spawnHostile("goblin", SQUARE.id)).toThrow();
+    expect(world.getHostilesInRoom(SQUARE.id)).toEqual([]);
   });
 
   it.each(["pve", "pvp"] as const)("spawns normally in %s", (mode) => {
     const world = buildWorld(mode);
-    const instance = world.spawnMonster("goblin", SQUARE.id);
+    const instance = world.spawnHostile("goblin", SQUARE.id);
     expect(instance.slug).toBe("goblin");
-    expect(world.getMonstersInRoom(SQUARE.id)).toHaveLength(1);
+    expect(world.getHostilesInRoom(SQUARE.id)).toHaveLength(1);
   });
 
   it("exposes capabilities derived from the mode", () => {
@@ -278,7 +277,7 @@ describe("dispatch — combat in exploration", () => {
 
   it.each(["pve", "pvp"] as const)("resolves attack in %s", async (mode) => {
     const world = buildWorld(mode);
-    world.spawnMonster("goblin", SQUARE.id);
+    world.spawnHostile("goblin", SQUARE.id);
     const result = await dispatch({
       world,
       session: sessionAt(SQUARE.id),

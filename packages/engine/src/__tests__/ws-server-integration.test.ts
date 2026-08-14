@@ -54,7 +54,7 @@ function buildWorld(): WorldState {
     description: "Innkeeper.",
     roomId: "room-inn",
     pronoun: "she",
-    alignment: "good",
+    tags: ["good"],
     intelligenceMode: "canned",
     dialogLines: ["A room for the night?"],
     interests: ["lodging"],

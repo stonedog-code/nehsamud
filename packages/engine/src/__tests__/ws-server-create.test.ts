@@ -68,7 +68,7 @@ function buildWorld(): WorldState {
  */
 interface FakeRow {
   id: string;
-  userId: string;
+  ownerId: string;
   name: string;
   roomId: string | null;
   currentHp: number;
@@ -82,9 +82,39 @@ interface FakeRow {
   constitution: number;
   dexterity: number;
   luck: number;
-  race: { name: string };
-  class: { name: string };
+  options: Array<{
+    group: { key: string; name: string; position: number };
+    option: { slug: string; name: string };
+  }>;
 }
+
+/** The two axes this fake world declares, and what is on each. */
+const FAKE_GROUPS = [
+  {
+    id: "group-race",
+    key: "race",
+    name: "Race",
+    description: "",
+    required: true,
+    position: 0,
+    options: [
+      { slug: "dwarf", name: "Dwarf", description: "" },
+      { slug: "human", name: "Human", description: "" },
+    ],
+  },
+  {
+    id: "group-class",
+    key: "class",
+    name: "Class",
+    description: "",
+    required: true,
+    position: 1,
+    options: [
+      { slug: "mage", name: "Mage", description: "" },
+      { slug: "warrior", name: "Warrior", description: "" },
+    ],
+  },
+];
 
 function fakePrisma(
   createImpl?: (data: Record<string, unknown>) => Promise<FakeRow>,
@@ -95,7 +125,7 @@ function fakePrisma(
     if (createImpl) return createImpl(args.data);
     const row: FakeRow = {
       id: `player-${nextId++}`,
-      userId: args.data.userId as string,
+      ownerId: args.data.ownerId as string,
       name: args.data.name as string,
       roomId: args.data.roomId as string | null,
       currentHp: args.data.currentHp as number,
@@ -112,40 +142,54 @@ function fakePrisma(
       constitution: 10,
       dexterity: 10,
       luck: 10,
-      race: { name: "Human" },
-      class: { name: "Fighter" },
+      options: [
+        {
+          group: { key: "race", name: "Race", position: 0 },
+          option: { slug: "human", name: "Human" },
+        },
+        {
+          group: { key: "class", name: "Class", position: 1 },
+          option: { slug: "warrior", name: "Warrior" },
+        },
+      ],
     };
-    rows.set(row.userId, row);
+    rows.set(row.ownerId, row);
     return row;
   });
   return {
     mudPlayer: {
-      findFirst: jest.fn(async (args: { where: { userId: string } }) =>
-        rows.get(args.where.userId) ?? null,
+      findFirst: jest.fn(async (args: { where: { ownerId: string } }) =>
+        rows.get(args.where.ownerId) ?? null,
       ),
       create,
       update: jest.fn(async () => undefined),
     },
-    mudRace: {
-      findMany: jest.fn(async () => [
-        { slug: "dwarf", name: "Dwarf" },
-        { slug: "human", name: "Human" },
-      ]),
-      findUnique: jest.fn(async (args: { where: { slug: string } }) =>
-        ["dwarf", "human"].includes(args.where.slug)
-          ? { id: `race-${args.where.slug}`, playable: true }
-          : null,
-      ),
+    mudCharacterOptionGroup: {
+      findMany: jest.fn(async () => FAKE_GROUPS),
     },
-    mudClass: {
-      findMany: jest.fn(async () => [
-        { slug: "mage", name: "Mage" },
-        { slug: "warrior", name: "Warrior" },
-      ]),
-      findUnique: jest.fn(async (args: { where: { slug: string } }) =>
-        ["mage", "warrior"].includes(args.where.slug)
-          ? { id: `class-${args.where.slug}`, playable: true }
-          : null,
+    mudCharacterOption: {
+      findUnique: jest.fn(
+        async (args: {
+          where: { groupId_slug: { groupId: string; slug: string } };
+        }) => {
+          const { groupId, slug } = args.where.groupId_slug;
+          const group = FAKE_GROUPS.find((g) => g.id === groupId);
+          const option = group?.options.find((o) => o.slug === slug);
+          return option
+            ? {
+                id: `option-${slug}`,
+                slug,
+                selectable: true,
+                strengthMod: 0,
+                intelligenceMod: 0,
+                wisdomMod: 0,
+                charismaMod: 0,
+                constitutionMod: 0,
+                dexterityMod: 0,
+                luckMod: 0,
+              }
+            : null;
+        },
       ),
     },
     _rows: rows,

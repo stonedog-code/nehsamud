@@ -1,4 +1,10 @@
-import { CLASSES, ITEMS, MONSTERS, NPCS, RACES, ROOMS } from "../seed/fixtures/index.js";
+import {
+  CHARACTER_OPTION_GROUPS,
+  ITEMS,
+  HOSTILES,
+  NPCS,
+  ROOMS,
+} from "../seed/fixtures/index.js";
 import { pruneCatalog } from "../seed/seed.js";
 
 /**
@@ -24,12 +30,14 @@ interface Extra {
   rooms?: Array<{ id: string; enumKey: string }>;
   npcs?: Array<{ id: string; slug: string }>;
   items?: Array<{ id: string; name: string }>;
-  monsters?: Array<{ id: string; slug: string }>;
-  races?: Array<{ id: string; slug: string }>;
-  classes?: Array<{ id: string; slug: string }>;
+  hostiles?: Array<{ id: string; slug: string }>;
+  /** Extra option rows, keyed by the group they belong to. */
+  options?: Array<{ id: string; slug: string; groupKey: string }>;
+  /** Extra option GROUPS the fixtures no longer declare. */
+  optionGroups?: Array<{ id: string; key: string }>;
   /** itemIds some player is carrying. */
   carried?: Set<string>;
-  /** raceIds / classIds some character was built from. */
+  /** optionIds / groupIds some character was built from. */
   inUse?: Set<string>;
   /** roomIds players are standing in. */
   occupied?: Set<string>;
@@ -57,18 +65,20 @@ function makeDb(extra: Extra = {}) {
       ...ITEMS.map((it, i) => ({ id: `item-${i}`, name: it.name })),
       ...(extra.items ?? []),
     ],
-    monsters: [
-      ...MONSTERS.map((m, i) => ({ id: `mon-${i}`, slug: m.slug })),
-      ...(extra.monsters ?? []),
+    hostiles: [
+      ...HOSTILES.map((m, i) => ({ id: `mon-${i}`, slug: m.slug })),
+      ...(extra.hostiles ?? []),
     ],
-    races: [
-      ...RACES.map((r, i) => ({ id: `race-${i}`, slug: r.slug })),
-      ...(extra.races ?? []),
+    optionGroups: [
+      ...CHARACTER_OPTION_GROUPS.map((g) => ({
+        id: `group-${g.key}`,
+        key: g.key,
+      })),
+      ...(extra.optionGroups ?? []),
     ],
-    classes: [
-      ...CLASSES.map((c, i) => ({ id: `class-${i}`, slug: c.slug })),
-      ...(extra.classes ?? []),
-    ],
+    // Only the EXTRA options are held: the prune asks for options outside
+    // the declared slug list, so declared ones are never returned to it.
+    options: extra.options ?? [],
     carried: extra.carried ?? new Set<string>(),
     inUse: extra.inUse ?? new Set<string>(),
     occupied: extra.occupied ?? new Set<string>(),
@@ -78,17 +88,17 @@ function makeDb(extra: Extra = {}) {
     rooms: [] as string[],
     npcs: [] as string[],
     items: [] as string[],
-    monsters: [] as string[],
-    races: [] as string[],
-    classes: [] as string[],
+    hostiles: [] as string[],
+    options: [] as string[],
+    optionGroups: [] as string[],
   };
   let relocated = 0;
 
   const prisma = {
-    mudMonster: {
-      findMany: jest.fn(async () => rows.monsters),
+    mudHostile: {
+      findMany: jest.fn(async () => rows.hostiles),
       deleteMany: jest.fn(async (c: { where: { id: { in: string[] } } }) => {
-        deleted.monsters.push(...c.where.id.in);
+        deleted.hostiles.push(...c.where.id.in);
         return { count: c.where.id.in.length };
       }),
     },
@@ -125,25 +135,42 @@ function makeDb(extra: Extra = {}) {
         return { count: c.where.id.in.length };
       }),
     },
-    mudRace: {
-      findMany: jest.fn(async () => rows.races),
+    mudCharacterOptionGroup: {
+      findMany: jest.fn(async () => rows.optionGroups),
       delete: jest.fn(async (c: { where: { id: string } }) => {
-        deleted.races.push(c.where.id);
+        deleted.optionGroups.push(c.where.id);
       }),
     },
-    mudClass: {
-      findMany: jest.fn(async () => rows.classes),
+    mudCharacterOption: {
+      findMany: jest.fn(async (c: { where: { groupId: string } }) =>
+        rows.options
+          .filter((o) => `group-${o.groupKey}` === c.where.groupId)
+          .map((o) => ({ id: o.id, slug: o.slug })),
+      ),
+      // "Is anything left in this group" — only the extras survive deletion,
+      // and a deleted one must stop counting.
+      findFirst: jest.fn(async (c: { where: { groupId: string } }) => {
+        const left = rows.options.find(
+          (o) =>
+            `group-${o.groupKey}` === c.where.groupId &&
+            !deleted.options.includes(o.id),
+        );
+        return left ? { id: left.id } : null;
+      }),
       delete: jest.fn(async (c: { where: { id: string } }) => {
-        deleted.classes.push(c.where.id);
+        deleted.options.push(c.where.id);
       }),
     },
-    mudPlayer: {
+    mudPlayerOption: {
       findFirst: jest.fn(
-        async (c: { where: { raceId?: string; classId?: string } }) => {
-          const key = c.where.raceId ?? c.where.classId ?? "";
-          return rows.inUse?.has(key) ? { id: "player-1" } : null;
+        async (c: { where: { optionId?: string; groupId?: string } }) => {
+          const key = c.where.optionId ?? c.where.groupId ?? "";
+          return rows.inUse?.has(key) ? { playerId: "player-1" } : null;
         },
       ),
+    },
+    mudPlayer: {
+      findFirst: jest.fn(async () => null),
       updateMany: jest.fn(
         async (c: { where: { roomId: { in: string[] } } }) => {
           const n = c.where.roomId.in.filter((id) =>
@@ -175,9 +202,9 @@ describe("pruneCatalog removes what no fixture declares", () => {
       rooms: [],
       npcs: [],
       items: [],
-      monsters: [],
-      races: [],
-      classes: [],
+      hostiles: [],
+      optionGroups: [],
+      options: [],
       playersRelocated: 0,
     });
   });
@@ -199,11 +226,11 @@ describe("pruneCatalog removes what no fixture declares", () => {
     expect(db.deleted.rooms).toEqual(["room-ghost"]);
   });
 
-  it("removes an orphaned monster", async () => {
+  it("removes an orphaned hostile", async () => {
     const db = makeDb({
-      monsters: [{ id: "mon-ghost", slug: "dire-badger" }],
+      hostiles: [{ id: "mon-ghost", slug: "dire-badger" }],
     });
-    expect((await pruneCatalog(db.prisma)).monsters).toEqual(["dire-badger"]);
+    expect((await pruneCatalog(db.prisma)).hostiles).toEqual(["dire-badger"]);
   });
 
   it("leaves the rooms the fixtures still declare completely alone", async () => {
@@ -236,28 +263,51 @@ describe("pruneCatalog refuses to destroy what a player owns", () => {
     expect((await pruneCatalog(db.prisma)).items).toEqual(["Broken Cog"]);
   });
 
-  it("will not prune a race a character was built from", async () => {
+  it("will not prune an option a character was built from", async () => {
     // The row is the only record of what that character is.
     const db = makeDb({
-      races: [{ id: "race-gnome", slug: "gnome" }],
-      inUse: new Set(["race-gnome"]),
+      options: [{ id: "option-gnome", slug: "gnome", groupKey: "race" }],
+      inUse: new Set(["option-gnome"]),
     });
-    expect((await pruneCatalog(db.prisma)).races).toEqual([]);
+    expect((await pruneCatalog(db.prisma)).options).toEqual([]);
   });
 
-  it("will not prune a class a character was built from", async () => {
+  it("prunes an unused option, naming its group", async () => {
     const db = makeDb({
-      classes: [{ id: "class-druid", slug: "druid" }],
-      inUse: new Set(["class-druid"]),
+      options: [{ id: "option-druid", slug: "druid", groupKey: "class" }],
     });
-    expect((await pruneCatalog(db.prisma)).classes).toEqual([]);
+    expect((await pruneCatalog(db.prisma)).options).toEqual(["class/druid"]);
   });
 
-  it("prunes an unused race", async () => {
+  it("removes a whole group the pack stopped declaring", async () => {
+    // A pack dropping an axis — the case that could not happen at all while
+    // race and class were tables.
     const db = makeDb({
-      races: [{ id: "race-gnome", slug: "gnome" }],
+      optionGroups: [{ id: "group-homeland", key: "homeland" }],
+      options: [{ id: "option-hills", slug: "hills", groupKey: "homeland" }],
     });
-    expect((await pruneCatalog(db.prisma)).races).toEqual(["gnome"]);
+    const result = await pruneCatalog(db.prisma);
+    expect(result.options).toEqual(["homeland/hills"]);
+    expect(result.optionGroups).toEqual(["homeland"]);
+  });
+
+  it("keeps an undeclared group alive while a character still points at it", async () => {
+    // Removing the group would orphan the option that describes somebody.
+    const db = makeDb({
+      optionGroups: [{ id: "group-homeland", key: "homeland" }],
+      options: [{ id: "option-hills", slug: "hills", groupKey: "homeland" }],
+      inUse: new Set(["option-hills"]),
+    });
+    const result = await pruneCatalog(db.prisma);
+    expect(result.options).toEqual([]);
+    expect(result.optionGroups).toEqual([]);
+  });
+
+  it("keeps a declared group even when one of its options goes", async () => {
+    const db = makeDb({
+      options: [{ id: "option-druid", slug: "druid", groupKey: "class" }],
+    });
+    expect((await pruneCatalog(db.prisma)).optionGroups).toEqual([]);
   });
 });
 

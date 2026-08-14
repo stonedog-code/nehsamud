@@ -69,19 +69,19 @@ async function main(): Promise<void> {
   const world = new WorldState(gameMode);
   await world.load(prisma);
 
-  // Monsters are skipped entirely in a mode without them. `spawnMonster`
+  // Hostiles are skipped entirely in a mode without them. `spawnHostile`
   // would refuse anyway — that is the point of having both guards — but
   // skipping here keeps the boot log honest rather than noisy.
-  let monstersSpawned = 0;
-  if (world.capabilities.monsters) {
-    const { MONSTER_SPAWNS } = await import("./seed/fixtures/index.js");
-    for (const spawn of MONSTER_SPAWNS) {
+  let hostilesSpawned = 0;
+  if (world.capabilities.hostiles) {
+    const { HOSTILE_SPAWNS } = await import("./seed/fixtures/index.js");
+    for (const spawn of HOSTILE_SPAWNS) {
       const room = world.getRoomByEnumKey(spawn.roomEnumKey);
       if (!room) continue;
-      const catalog = world.getMonsterBySlug(spawn.monsterSlug);
+      const catalog = world.getHostileBySlug(spawn.hostileSlug);
       if (!catalog) continue;
-      world.spawnMonster(spawn.monsterSlug, room.id);
-      monstersSpawned += 1;
+      world.spawnHostile(spawn.hostileSlug, room.id);
+      hostilesSpawned += 1;
     }
   }
   console.log(
@@ -90,8 +90,8 @@ async function main(): Promise<void> {
       mode: gameMode,
       rooms: world.roomCount(),
       npcs: world.npcCount(),
-      monsterCatalog: world.monsterCatalogCount(),
-      monstersSpawned,
+      hostileCatalog: world.hostileCatalogCount(),
+      hostilesSpawned,
     }),
   );
 

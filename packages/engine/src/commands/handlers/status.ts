@@ -61,12 +61,22 @@ export const statisticsHandler: CommandHandler = ({ session }) => {
   const name = session.characterName ?? "Traveller";
   const level = levelForXp(session.experience);
 
-  const lines = [
-    `${name} — level ${level}`,
-    sheet ? `${sheet.raceName} ${sheet.className}` : "Race and class unknown",
+  const lines = [`${name} — level ${level}`];
+
+  // What a character is built from is pack data, so this renders whatever
+  // axes the world declares rather than a fixed "race class" line. A pack
+  // with no axes prints nothing here — that is a world where you are simply
+  // yourself, not a character whose details failed to load, so there is no
+  // "unknown" to report. A sheet that never loaded at all is the case the
+  // `sheet &&` guard covers.
+  if (sheet?.options.length) {
+    lines.push(sheet.options.map((o) => o.optionName).join(" "));
+  }
+
+  lines.push(
     `Health: ${session.currentHp} of ${session.maxHp}`,
     `Experience: ${session.experience}`,
-  ];
+  );
 
   if (level < MAX_LEVEL) {
     lines.push(
@@ -134,10 +144,10 @@ export const restHandler: CommandHandler = ({ world, session }) => {
     return reply("You are in no condition to rest. You are on the ground.");
   }
 
-  // A monster in the room refuses the rest, exactly as the original did —
+  // A hostile in the room refuses the rest, exactly as the original did —
   // this is the one rule of the Python version worth keeping verbatim,
   // because it is what stops `rest` being a free heal mid-fight.
-  const hostiles = world.getMonstersInRoom(session.currentRoomId);
+  const hostiles = world.getHostilesInRoom(session.currentRoomId);
   if (hostiles.length > 0) {
     session.resting = false;
     const who = hostiles.length === 1 ? hostiles[0]!.name : "something hostile";

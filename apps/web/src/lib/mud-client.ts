@@ -20,8 +20,9 @@ export interface AuthFrame {
 export interface CreateCharacterFrame {
   type: "CREATE_CHARACTER";
   name: string;
-  race: string;
-  class: string;
+  /** groupKey → optionSlug, e.g. { race: "elf", class: "mage" }. The axes
+   * are pack data, so the frame carries a map rather than named fields. */
+  options: Record<string, string>;
 }
 
 export interface ClientMessageFrame {

@@ -61,8 +61,13 @@ const COIN: CachedItem = {
 };
 
 const SHEET: CharacterSheet = {
-  raceName: "Human",
-  className: "Warrior",
+  options: [
+
+    { groupName: "Race", optionName: "Human" },
+
+    { groupName: "Class", optionName: "Warrior" },
+
+  ],
   strength: 10,
   intelligence: 10,
   wisdom: SEARCH_BASELINE_WISDOM,

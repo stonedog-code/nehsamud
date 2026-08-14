@@ -1,12 +1,19 @@
 /**
  * Type shapes shared across the fixture catalog.
  *
- * Stable string keys (race.slug, room.enumKey, item.name,
- * monster.slug, npc.slug) are the application-layer references.
+ * Stable string keys (group.key, option.slug, room.enumKey, item.name,
+ * hostile.slug, npc.slug) are the application-layer references.
  * Don't rename them without a paired application-side change.
  */
 
-export interface RaceFixture {
+/**
+ * One choice on one character-creation axis — "Elf", "Warrior",
+ * "Night nurse".
+ *
+ * Its `slug` is unique within its group rather than globally, so two
+ * groups may both offer a "standard" without colliding.
+ */
+export interface CharacterOptionFixture {
   slug: string;
   name: string;
   description: string;
@@ -20,22 +27,30 @@ export interface RaceFixture {
   abilities: string[];
   directives: string[];
   baseExperienceAdjustment: number;
+  /** Defaults to true. False hides the option from creation. */
+  selectable?: boolean;
 }
 
-export interface ClassFixture {
-  slug: string;
+/**
+ * An axis a character is built on, declared by the content pack.
+ *
+ * This is the thing that used to be hardcoded. The engine had a `race`
+ * table and a `class` table, so every world had exactly those two axes and
+ * could have no others — a care-centre world would have had to explain what
+ * a resident's "race" and "class" were. A pack now declares its own: this
+ * one has Race and Class because it is a fantasy pack.
+ */
+export interface CharacterOptionGroupFixture {
+  /** Stable lowercase key, e.g. "race". The wire value. */
+  key: string;
+  /** What a player is shown, e.g. "Race". */
   name: string;
   description: string;
-  strengthMod: number;
-  intelligenceMod: number;
-  wisdomMod: number;
-  charismaMod: number;
-  constitutionMod: number;
-  dexterityMod: number;
-  luckMod: number;
-  abilities: string[];
-  directives: string[];
-  baseExperienceAdjustment: number;
+  /** Order the creation flow asks in. Ties broken by `key`. */
+  position: number;
+  /** Whether a character must pick from this group. Defaults to true. */
+  required?: boolean;
+  options: CharacterOptionFixture[];
 }
 
 export interface RoomFixture {
@@ -74,7 +89,8 @@ export interface ItemFixture {
   weight: number;
 }
 
-export interface MonsterFixture {
+/** Something that can be fought. */
+export interface HostileFixture {
   slug: string;
   name: string;
   description: string;
@@ -82,8 +98,15 @@ export interface MonsterFixture {
   baseHp: number;
   baseDamage: number;
   experience: number;
-  alignment: Alignment;
-  mobType: MobType;
+  /**
+   * Pack-defined labels, e.g. `["undead", "evil"]`.
+   *
+   * Replaced an `alignment` enum of four moral positions and a `mobType`
+   * enum of five creature kinds — a fantasy bestiary's taxonomy, which every
+   * world had to have whether or not it had a bestiary. The engine reads
+   * none of these; they exist so a pack can classify its own content.
+   */
+  tags: string[];
 }
 
 export interface NpcFixture {
@@ -94,14 +117,12 @@ export interface NpcFixture {
    * placed yet. */
   roomEnumKey: string | null;
   pronoun: "he" | "she" | "they";
-  alignment: Alignment;
+  /** Pack-defined labels, same as {@link HostileFixture.tags}. */
+  tags: string[];
   intelligenceMode: "canned" | "ai";
   dialogLines: string[];
   interests: string[];
 }
-
-export type Alignment = "lawful_good" | "good" | "neutral" | "evil";
-export type MobType = "humanoid" | "beast" | "undead" | "elemental" | "construct";
 
 /**
  * Status effect catalog. TS-only (not persisted) — the Phase 5

@@ -5,7 +5,7 @@
  * reachable; either alone leaves an inventory that can only grow or only
  * shrink.
  *
- * A dropped item stays in the room — room contents persist, unlike monster
+ * A dropped item stays in the room — room contents persist, unlike hostile
  * spawns — so this is how a player leaves something for someone else, and how
  * they will get their belongings back after a PVP loss (NEH-624).
  */

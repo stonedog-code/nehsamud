@@ -13,8 +13,8 @@
  *     already carries, so no handler can be reached without it;
  *   - never readable from, or influenced by, anything a client sends.
  *
- * Enforcement lives in two independent places on purpose — `spawnMonster`
- * refuses to create a monster, and the dispatcher refuses to resolve a
+ * Enforcement lives in two independent places on purpose — `spawnHostile`
+ * refuses to create a hostile, and the dispatcher refuses to resolve a
  * combat verb. Either one alone leaves a reachable path into combat in the
  * build whose entire premise is that there isn't one.
  */
@@ -24,8 +24,8 @@ export const GAME_MODES = ["exploration", "pve", "pvp"] as const;
 export type GameMode = (typeof GAME_MODES)[number];
 
 export interface ModeCapabilities {
-  /** Monsters may exist in the world. */
-  readonly monsters: boolean;
+  /** Hostiles may exist in the world. */
+  readonly hostiles: boolean;
   /** Combat verbs resolve to a handler. */
   readonly combat: boolean;
   /** Players may target other players. */
@@ -34,27 +34,27 @@ export interface ModeCapabilities {
   readonly looting: boolean;
   /** Player-authored automation is offered. Off wherever there is no combat
    * — the thing scripting exists to automate is the grind, and a world
-   * without monsters has none. */
+   * without hostiles has none. */
   readonly scripting: boolean;
 }
 
 export const MODE_CAPABILITIES: Readonly<Record<GameMode, ModeCapabilities>> = {
   exploration: {
-    monsters: false,
+    hostiles: false,
     combat: false,
     playerVersusPlayer: false,
     looting: false,
     scripting: false,
   },
   pve: {
-    monsters: true,
+    hostiles: true,
     combat: true,
     playerVersusPlayer: false,
     looting: false,
     scripting: true,
   },
   pvp: {
-    monsters: true,
+    hostiles: true,
     combat: true,
     playerVersusPlayer: true,
     looting: true,
@@ -66,8 +66,8 @@ export const MODE_CAPABILITIES: Readonly<Record<GameMode, ModeCapabilities>> = {
  * The mode a process runs in when `MUD_GAME_MODE` is not set.
  *
  * Deliberately the most restrictive one. A deployment that forgets to
- * configure a mode gets a world with no monsters and no combat, which is
- * safe and obvious; the opposite default would put monsters in front of the
+ * configure a mode gets a world with no hostiles and no combat, which is
+ * safe and obvious; the opposite default would put hostiles in front of the
  * audience least equipped to expect them, and nothing would report it.
  */
 export const DEFAULT_GAME_MODE: GameMode = "exploration";
@@ -91,7 +91,7 @@ export function capabilitiesFor(mode: GameMode): ModeCapabilities {
  * An unset value falls back to {@link DEFAULT_GAME_MODE}. An unrecognised
  * value **throws**, which takes the boot down rather than starting a world
  * nobody chose: a typo that quietly narrowed the mode would leave a PVE host
- * mysteriously monsterless, and a fallback that quietly widened it would be
+ * mysteriously hostileless, and a fallback that quietly widened it would be
  * the exact failure this module exists to prevent. Failing at boot puts the
  * mistake in front of the operator while they are still deploying.
  */

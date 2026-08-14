@@ -10,7 +10,7 @@ import { parseCommand } from "../commands/parser.js";
 import { DEFAULT_MAX_HP } from "../world/session.js";
 import type { CharacterSheet, InventoryEntry, SessionState } from "../world/session.js";
 import { WorldState } from "../world/world-state.js";
-import type { CachedItem, CachedMonster, CachedRoom } from "../world/world-state.js";
+import type { CachedItem, CachedHostile, CachedRoom } from "../world/world-state.js";
 
 /**
  * `equip` / `unequip`.
@@ -64,7 +64,7 @@ const BERRIES: CachedItem = {
   weight: 1,
 };
 
-const GOBLIN: CachedMonster = {
+const GOBLIN: CachedHostile = {
   id: "mon-goblin",
   slug: "goblin",
   name: "a goblin",
@@ -73,8 +73,7 @@ const GOBLIN: CachedMonster = {
   baseHp: 200, // deliberately unkillable, so damage can be measured over swings
   baseDamage: 1,
   experience: 5,
-  alignment: "evil",
-  mobType: "humanoid",
+  tags: ["humanoid", "evil"],
 };
 
 /**
@@ -84,7 +83,7 @@ const GOBLIN: CachedMonster = {
  * so 4 points of protection reduce 1 to 1 and an armour test against it
  * passes or fails for reasons that have nothing to do with armour.
  */
-const BRUTE: CachedMonster = {
+const BRUTE: CachedHostile = {
   id: "mon-brute",
   slug: "brute",
   name: "a brute",
@@ -93,13 +92,17 @@ const BRUTE: CachedMonster = {
   baseHp: 200,
   baseDamage: 14,
   experience: 20,
-  alignment: "evil",
-  mobType: "humanoid",
+  tags: ["humanoid", "evil"],
 };
 
 const SHEET: CharacterSheet = {
-  raceName: "Human",
-  className: "Warrior",
+  options: [
+
+    { groupName: "Race", optionName: "Human" },
+
+    { groupName: "Class", optionName: "Warrior" },
+
+  ],
   strength: 10,
   intelligence: 10,
   wisdom: 10,
@@ -284,10 +287,10 @@ describe("equipment reaches combat", () => {
   /** Total damage dealt over N swings against an unkillable goblin. */
   async function damageOver(inventory: InventoryEntry[], swings: number) {
     const w = buildWorld();
-    w.spawnMonster("goblin", SQUARE.id);
+    w.spawnHostile("goblin", SQUARE.id);
     const s = session({ inventory });
-    const monster = w.getMonstersInRoom(SQUARE.id)[0]!;
-    const startHp = monster.currentHp;
+    const hostile = w.getHostilesInRoom(SQUARE.id)[0]!;
+    const startHp = hostile.currentHp;
     for (let i = 0; i < swings; i += 1) {
       // Same seed each run, so the only difference between the two calls is
       // the equipment.
@@ -298,7 +301,7 @@ describe("equipment reaches combat", () => {
         rng: createRng(12345 + i),
       });
     }
-    return startHp - w.getMonstersInRoom(SQUARE.id)[0]!.currentHp;
+    return startHp - w.getHostilesInRoom(SQUARE.id)[0]!.currentHp;
   }
 
   it("a wielded weapon makes the player hit harder", async () => {
@@ -318,7 +321,7 @@ describe("equipment reaches combat", () => {
   it("worn armour reduces what the player takes", async () => {
     async function damageTaken(inventory: InventoryEntry[]) {
       const w = buildWorld();
-      w.spawnMonster("brute", SQUARE.id);
+      w.spawnHostile("brute", SQUARE.id);
       const s = session({ inventory, currentHp: 5000, maxHp: 5000 });
       for (let i = 0; i < 8; i += 1) {
         await dispatch({

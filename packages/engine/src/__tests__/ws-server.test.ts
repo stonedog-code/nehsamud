@@ -111,7 +111,7 @@ describe("MudWsServer — AUTH-first gate", () => {
     // affordance the server refuses.
     expect(reply.mode).toBe("exploration");
     expect(reply.capabilities).toEqual({
-      monsters: false,
+      hostiles: false,
       combat: false,
       playerVersusPlayer: false,
       looting: false,

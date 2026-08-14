@@ -50,7 +50,7 @@ export const talkHandler: CommandHandler = async ({
     try {
       const prompt = buildAiPrompt({
         npcName: npc.name,
-        npcAlignment: npc.alignment,
+        npcTags: npc.tags,
         npcPronoun: npc.pronoun,
         npcInterests: npc.interests,
         npcCannedLines: npc.dialogLines,
@@ -78,7 +78,7 @@ export const talkHandler: CommandHandler = async ({
 
 interface AiPromptInput {
   npcName: string;
-  npcAlignment: string;
+  npcTags: string[];
   npcPronoun: string;
   npcInterests: string[];
   npcCannedLines: string[];
@@ -93,7 +93,12 @@ function buildAiPrompt(input: AiPromptInput): string {
     "You are a non-player character in a fantasy MUD.",
     `Character name: ${input.npcName}.`,
     `Pronoun: ${input.npcPronoun}.`,
-    `Alignment: ${input.npcAlignment}.`,
+    // Was `Alignment: evil.` — one word from a four-value fantasy morality
+    // scale. Tags say more and assume less: a pack labels its own people
+    // however it needs to, and the model reads the labels as flavour.
+    `How others describe you: ${
+      input.npcTags.join(", ") || "unremarkable"
+    }.`,
     `Topics you care about: ${
       input.npcInterests.join(", ") || "none in particular"
     }.`,

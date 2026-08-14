@@ -286,7 +286,7 @@ export const TOWNSMEE_ROOMS: RoomFixture[] = [
       west: "TOWNSMEE_SUNROAD_SOUTH2",
       // Without this the lower quarter, the armoury and the bridge were an
       // ISLAND: internally consistent, reciprocal in every direction, and
-      // unreachable from the town square. The monster-spawn fixture even
+      // unreachable from the town square. The hostile-spawn fixture even
       // described walking here "from the square via the sunroad →
       // talentroad → ... sequence" — a route that did not exist, so the
       // goblin the demo flow relies on sat in a room no player could get to.

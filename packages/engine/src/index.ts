@@ -33,14 +33,22 @@ export {
 } from "./character.js";
 
 /**
- * The seeded race and class catalogs.
+ * The character-creation axes this build's pack declares.
  *
  * Exported so a creation screen can offer exactly what the seed puts in the
  * database, with exactly the modifiers the engine will apply. The web app
  * used to keep its own list with its own hp/damage numbers, which meant the
  * stat preview promised values the engine would never produce.
+ *
+ * This is a build-time convenience for a client shipped alongside its pack.
+ * A client that cannot assume that should read the groups from the database
+ * (`listOptionGroups`) instead.
  */
-export { CLASSES, RACES } from "./seed/fixtures/index.js";
+export {
+  CHARACTER_OPTION_GROUPS,
+  type CharacterOptionFixture,
+  type CharacterOptionGroupFixture,
+} from "./seed/fixtures/index.js";
 
 /* ── Modes ────────────────────────────────────────────────────── */
 export {
@@ -59,14 +67,25 @@ export {
 /* ── World ────────────────────────────────────────────────────── */
 export {
   WorldState,
-  type CachedMonster,
+  type CachedHostile,
   type CachedNpc,
   type CachedRoom,
-  type MonsterInstance,
+  type HostileInstance,
 } from "./world/world-state.js";
+export {
+  createPlayer,
+  listOptionGroups,
+  loadPlayer,
+  type CharacterChoice,
+  type OptionChoice,
+  type OptionGroup,
+  type PlayerRecord,
+  type SelectedOption,
+} from "./persistence/player-store.js";
 export {
   DEFAULT_MAX_HP,
   SessionRegistry,
+  type CharacterSheet,
   type SessionState,
 } from "./world/session.js";
 

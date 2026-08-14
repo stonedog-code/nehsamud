@@ -1,6 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 import { deriveCharacter } from "@nehsamud/engine/character";
-import { CLASSES, RACES } from "@nehsamud/engine/catalog";
+import { CHARACTER_OPTION_GROUPS } from "@nehsamud/engine/catalog";
+
+/** One option from one declared axis, by its keys. */
+function packOption(groupKey: string, slug: string) {
+  const group = CHARACTER_OPTION_GROUPS.find((g) => g.key === groupKey);
+  const option = group?.options.find((o) => o.slug === slug);
+  if (!option) throw new Error(`no ${groupKey} option "${slug}" in the pack`);
+  return option;
+}
 
 /**
  * End-to-end coverage of the three modes and the creation flow.
@@ -53,7 +61,7 @@ test("the front page offers all three modes on the dev site", async ({
   }
 });
 
-test("Exploration advertises no monsters and no combat", async ({ page }) => {
+test("Exploration advertises no hostiles and no combat", async ({ page }) => {
   await page.goto("/");
   const card = page
     .locator(".mode-card")
@@ -94,10 +102,10 @@ test("creating a character and entering the world", async ({ page }) => {
   // preview AGREES WITH THE SERVER rather than agreeing with a number
   // someone typed. The previous version asserted a literal 40 against the
   // app's own modifier table, which the engine never shared.
-  const dwarfWarrior = deriveCharacter(
-    RACES.find((r) => r.slug === "dwarf")!,
-    CLASSES.find((c) => c.slug === "warrior")!,
-  );
+  const dwarfWarrior = deriveCharacter([
+    packOption("race", "dwarf"),
+    packOption("class", "warrior"),
+  ]);
   await expect(
     page.getByText(String(dwarfWarrior.maxHp), { exact: true }),
   ).toBeVisible();
@@ -144,7 +152,7 @@ test("a tough build previews tougher than a frail one", async ({ page }) => {
   expect(tough).toBeGreaterThan(frail);
 });
 
-test("the chosen race and class reach the character sheet", async ({ page }) => {
+test("the chosen options reach the character sheet", async ({ page }) => {
   // The tier that would have caught the original bug: every unit test in the
   // chain passed while the selection was discarded between two pages.
   await page.goto("/play/pve/create");
@@ -171,7 +179,7 @@ test("the chosen race and class reach the character sheet", async ({ page }) => 
   await expect(transcript).not.toContainText("Dwarf Warrior");
 });
 
-test("a play URL with no race or class goes back to creation", async ({
+test("a play URL with no options at all goes back to creation", async ({
   page,
 }) => {
   // Substituting a default here is exactly what the bug was: a silent
@@ -180,7 +188,7 @@ test("a play URL with no race or class goes back to creation", async ({
   await expect(page.getByRole("heading", { name: "No character yet" })).toBeVisible();
 });
 
-test("a play URL naming a race that does not exist goes back to creation", async ({
+test("a play URL naming an option that does not exist goes back to creation", async ({
   page,
 }) => {
   await page.goto("/play/pve?name=Aria&race=wombat&class=warrior");

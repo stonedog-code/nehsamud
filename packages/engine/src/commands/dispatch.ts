@@ -9,7 +9,7 @@
  * world whose capabilities include combat, so in Exploration the handler is
  * not merely unadvertised — it is unreachable, and no combat span is ever
  * opened. This is the dispatcher half of the guard described in
- * `game-mode.ts`; the other half lives in `WorldState.spawnMonster`.
+ * `game-mode.ts`; the other half lives in `WorldState.spawnHostile`.
  */
 
 import { COMBAT_VERBS } from "../game-mode.js";

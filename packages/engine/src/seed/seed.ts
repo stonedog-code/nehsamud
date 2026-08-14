@@ -5,10 +5,10 @@
  * truncating + reinserting. We don't do that here:
  *
  *   - The Node service can crash-loop without disturbing player
- *     state — truncating monsters/rooms would orphan inventory and
+ *     state — truncating hostiles/rooms would orphan inventory and
  *     mid-run player positions.
  *   - Catalog rows are keyed by stable application identifiers
- *     (slug for race/class/monster/npc, enumKey for room, name for
+ *     (slug for race/class/hostile/npc, enumKey for room, name for
  *     item), so an upsert by that key gives us "create if missing,
  *     update if changed" without destroying anything.
  *
@@ -18,24 +18,25 @@
 import type { PrismaClient } from "@nehsamud/engine-db";
 
 import {
-  CLASSES,
+  CHARACTER_OPTION_GROUPS,
+  HOSTILES,
   ITEMS,
   ITEM_PLACEMENTS,
-  MONSTERS,
   NPCS,
-  RACES,
   ROOMS,
 } from "./fixtures/index.js";
 
 export interface SeedResult {
-  races: number;
-  classes: number;
+  /** Character-creation axes this pack declares. */
+  optionGroups: number;
+  /** Choices across all of those axes. */
+  options: number;
   rooms: number;
   items: number;
   /** Item stacks newly placed on a floor. Zero on a re-run, because rooms
    * that already have contents are left alone — see seedItemPlacements. */
   placements: number;
-  monsters: number;
+  hostiles: number;
   npcs: number;
   /** Catalog rows removed because no fixture declares them any more. */
   pruned: PruneResult;
@@ -52,77 +53,97 @@ export interface PruneResult {
   rooms: string[];
   npcs: string[];
   items: string[];
-  monsters: string[];
-  races: string[];
-  classes: string[];
+  hostiles: string[];
+  /** Group keys removed. */
+  optionGroups: string[];
+  /** Removed options, as "group/slug". */
+  options: string[];
   /** Players moved to the spawn because the room under them was removed. */
   playersRelocated: number;
 }
 
 export async function seedCatalog(prisma: PrismaClient): Promise<SeedResult> {
-  const races = await seedRaces(prisma);
-  const classes = await seedClasses(prisma);
+  const { groups: optionGroups, options } = await seedCharacterOptions(prisma);
   // Rooms must land before NPCs (NPCs may reference a room) and
   // before exit resolution.
   const rooms = await seedRooms(prisma);
   const items = await seedItems(prisma);
   // After rooms AND items — it joins the two.
   const placements = await seedItemPlacements(prisma);
-  const monsters = await seedMonsters(prisma);
+  const hostiles = await seedHostiles(prisma);
   const npcs = await seedNpcs(prisma);
   // Last, so everything the fixtures DO declare is already present — the
   // prune can then treat "absent from the fixtures" as "absent from the
   // database" without racing its own upserts.
   const pruned = await pruneCatalog(prisma);
-  return { races, classes, rooms, items, placements, monsters, npcs, pruned };
+  return {
+    optionGroups,
+    options,
+    rooms,
+    items,
+    placements,
+    hostiles,
+    npcs,
+    pruned,
+  };
 }
 
-async function seedRaces(prisma: PrismaClient): Promise<number> {
-  for (const r of RACES) {
-    await prisma.mudRace.upsert({
-      where: { slug: r.slug },
-      create: r,
-      update: {
-        name: r.name,
-        description: r.description,
-        abilities: r.abilities,
-        directives: r.directives,
-        strengthMod: r.strengthMod,
-        intelligenceMod: r.intelligenceMod,
-        wisdomMod: r.wisdomMod,
-        charismaMod: r.charismaMod,
-        constitutionMod: r.constitutionMod,
-        dexterityMod: r.dexterityMod,
-        luckMod: r.luckMod,
-        baseExperienceAdjustment: r.baseExperienceAdjustment,
+/**
+ * Upsert the pack's character-creation axes and their choices.
+ *
+ * Groups first, then their options, because an option is keyed by
+ * (group, slug) and cannot be written before the group it belongs to
+ * exists. Both are keyed on the pack's stable strings — `key` and `slug` —
+ * so re-seeding an edited fixture updates the row rather than creating a
+ * second one beside it.
+ */
+async function seedCharacterOptions(
+  prisma: PrismaClient,
+): Promise<{ groups: number; options: number }> {
+  let options = 0;
+  for (const group of CHARACTER_OPTION_GROUPS) {
+    const row = await prisma.mudCharacterOptionGroup.upsert({
+      where: { key: group.key },
+      create: {
+        key: group.key,
+        name: group.name,
+        description: group.description,
+        position: group.position,
+        required: group.required ?? true,
       },
-    });
-  }
-  return RACES.length;
-}
-
-async function seedClasses(prisma: PrismaClient): Promise<number> {
-  for (const c of CLASSES) {
-    await prisma.mudClass.upsert({
-      where: { slug: c.slug },
-      create: c,
       update: {
-        name: c.name,
-        description: c.description,
-        abilities: c.abilities,
-        directives: c.directives,
-        strengthMod: c.strengthMod,
-        intelligenceMod: c.intelligenceMod,
-        wisdomMod: c.wisdomMod,
-        charismaMod: c.charismaMod,
-        constitutionMod: c.constitutionMod,
-        dexterityMod: c.dexterityMod,
-        luckMod: c.luckMod,
-        baseExperienceAdjustment: c.baseExperienceAdjustment,
+        name: group.name,
+        description: group.description,
+        position: group.position,
+        required: group.required ?? true,
       },
+      select: { id: true },
     });
+    for (const option of group.options) {
+      const data = {
+        name: option.name,
+        description: option.description,
+        abilities: option.abilities,
+        directives: option.directives,
+        strengthMod: option.strengthMod,
+        intelligenceMod: option.intelligenceMod,
+        wisdomMod: option.wisdomMod,
+        charismaMod: option.charismaMod,
+        constitutionMod: option.constitutionMod,
+        dexterityMod: option.dexterityMod,
+        luckMod: option.luckMod,
+        baseExperienceAdjustment: option.baseExperienceAdjustment,
+        selectable: option.selectable ?? true,
+      };
+      await prisma.mudCharacterOption.upsert({
+        where: { groupId_slug: { groupId: row.id, slug: option.slug } },
+        create: { groupId: row.id, slug: option.slug, ...data },
+        update: data,
+      });
+      options += 1;
+    }
   }
-  return CLASSES.length;
+  return { groups: CHARACTER_OPTION_GROUPS.length, options };
 }
 
 async function seedRooms(prisma: PrismaClient): Promise<number> {
@@ -244,9 +265,9 @@ async function seedItemPlacements(prisma: PrismaClient): Promise<number> {
   return placed;
 }
 
-async function seedMonsters(prisma: PrismaClient): Promise<number> {
-  for (const m of MONSTERS) {
-    await prisma.mudMonster.upsert({
+async function seedHostiles(prisma: PrismaClient): Promise<number> {
+  for (const m of HOSTILES) {
+    await prisma.mudHostile.upsert({
       where: { slug: m.slug },
       create: m,
       update: {
@@ -256,12 +277,11 @@ async function seedMonsters(prisma: PrismaClient): Promise<number> {
         baseHp: m.baseHp,
         baseDamage: m.baseDamage,
         experience: m.experience,
-        alignment: m.alignment,
-        mobType: m.mobType,
+        tags: m.tags,
       },
     });
   }
-  return MONSTERS.length;
+  return HOSTILES.length;
 }
 
 async function seedNpcs(prisma: PrismaClient): Promise<number> {
@@ -292,7 +312,7 @@ async function seedNpcs(prisma: PrismaClient): Promise<number> {
         description: n.description,
         roomId,
         pronoun: n.pronoun,
-        alignment: n.alignment,
+        tags: n.tags,
         intelligenceMode: n.intelligenceMode,
         dialogLines: n.dialogLines,
         interests: n.interests,
@@ -302,7 +322,7 @@ async function seedNpcs(prisma: PrismaClient): Promise<number> {
         description: n.description,
         roomId,
         pronoun: n.pronoun,
-        alignment: n.alignment,
+        tags: n.tags,
         intelligenceMode: n.intelligenceMode,
         dialogLines: n.dialogLines,
         interests: n.interests,
@@ -343,8 +363,9 @@ const SPAWN_ROOM_ENUM_KEY = "TOWNSMEE_TOWNSQUARE";
  *   - An item any player is CARRYING is never pruned. That is somebody's
  *     property; a fixture deletion that would take it is reported and
  *     skipped rather than cascaded. The loud failure is the point.
- *   - A race or class any character was BUILT FROM is never pruned. The row
- *     is the only record of what that character is.
+ *   - A character option any character was BUILT FROM is never pruned, nor
+ *     is the group holding it. The row is the only record of what that
+ *     character is.
  *   - A room with players standing in it is pruned, but they are moved to
  *     the spawn first. Leaving them would be a foreign-key error at seed
  *     time; deleting them is not on the table.
@@ -356,24 +377,24 @@ export async function pruneCatalog(
     rooms: [],
     npcs: [],
     items: [],
-    monsters: [],
-    races: [],
-    classes: [],
+    hostiles: [],
+    optionGroups: [],
+    options: [],
     playersRelocated: 0,
   };
 
   /* ── Things nothing else depends on ─────────────────────────── */
 
-  const monsterSlugs = new Set(MONSTERS.map((m) => m.slug));
-  const staleMonsters = (
-    await prisma.mudMonster.findMany({ select: { id: true, slug: true } })
-  ).filter((m) => !monsterSlugs.has(m.slug));
-  if (staleMonsters.length > 0) {
-    // Monster instances live in memory, so the catalog row has no dependants.
-    await prisma.mudMonster.deleteMany({
-      where: { id: { in: staleMonsters.map((m) => m.id) } },
+  const hostileSlugs = new Set(HOSTILES.map((m) => m.slug));
+  const staleHostiles = (
+    await prisma.mudHostile.findMany({ select: { id: true, slug: true } })
+  ).filter((m) => !hostileSlugs.has(m.slug));
+  if (staleHostiles.length > 0) {
+    // Hostile instances live in memory, so the catalog row has no dependants.
+    await prisma.mudHostile.deleteMany({
+      where: { id: { in: staleHostiles.map((m) => m.id) } },
     });
-    result.monsters = staleMonsters.map((m) => m.slug);
+    result.hostiles = staleHostiles.map((m) => m.slug);
   }
 
   const npcSlugs = new Set(NPCS.map((n) => n.slug));
@@ -446,34 +467,62 @@ export async function pruneCatalog(
     result.rooms = staleRooms.map((r) => r.enumKey);
   }
 
-  /* ── Races and classes: never orphan a character ────────────── */
+  /* ── Character options: never orphan a character ────────────── */
 
-  const raceSlugs = new Set(RACES.map((r) => r.slug));
-  const staleRaces = (
-    await prisma.mudRace.findMany({ select: { id: true, slug: true } })
-  ).filter((r) => !raceSlugs.has(r.slug));
-  for (const race of staleRaces) {
-    const inUse = await prisma.mudPlayer.findFirst({
-      where: { raceId: race.id },
+  const declaredGroups = new Map(
+    CHARACTER_OPTION_GROUPS.map((g) => [g.key, new Set(g.options.map((o) => o.slug))]),
+  );
+  const groupRows = await prisma.mudCharacterOptionGroup.findMany({
+    select: { id: true, key: true },
+  });
+
+  for (const group of groupRows) {
+    const declaredSlugs = declaredGroups.get(group.key);
+
+    // A group the pack no longer declares: its options go first, then it.
+    // Both halves refuse anything a character was built from — that row is
+    // the only record of what that character IS, and taking it would leave
+    // a sheet that cannot say what it is looking at.
+    const staleOptions = await prisma.mudCharacterOption.findMany({
+      where: {
+        groupId: group.id,
+        ...(declaredSlugs ? { slug: { notIn: [...declaredSlugs] } } : {}),
+      },
+      select: { id: true, slug: true },
+    });
+
+    let optionsInUse = false;
+    for (const option of staleOptions) {
+      const inUse = await prisma.mudPlayerOption.findFirst({
+        where: { optionId: option.id },
+        select: { playerId: true },
+      });
+      if (inUse) {
+        optionsInUse = true;
+        continue;
+      }
+      await prisma.mudCharacterOption.delete({ where: { id: option.id } });
+      result.options.push(`${group.key}/${option.slug}`);
+    }
+
+    if (declaredSlugs) continue;
+
+    // Undeclared group. Only removable once nothing points at it: any
+    // surviving option (in use, per above) keeps its group alive, and so
+    // does a player_option row referencing the group directly.
+    if (optionsInUse) continue;
+    const remaining = await prisma.mudCharacterOption.findFirst({
+      where: { groupId: group.id },
       select: { id: true },
     });
-    if (inUse) continue;
-    await prisma.mudRace.delete({ where: { id: race.id } });
-    result.races.push(race.slug);
-  }
-
-  const classSlugs = new Set(CLASSES.map((c) => c.slug));
-  const staleClasses = (
-    await prisma.mudClass.findMany({ select: { id: true, slug: true } })
-  ).filter((c) => !classSlugs.has(c.slug));
-  for (const klass of staleClasses) {
-    const inUse = await prisma.mudPlayer.findFirst({
-      where: { classId: klass.id },
-      select: { id: true },
+    if (remaining) continue;
+    const chosenByAnyone = await prisma.mudPlayerOption.findFirst({
+      where: { groupId: group.id },
+      select: { playerId: true },
     });
-    if (inUse) continue;
-    await prisma.mudClass.delete({ where: { id: klass.id } });
-    result.classes.push(klass.slug);
+    if (chosenByAnyone) continue;
+    await prisma.mudCharacterOptionGroup.delete({ where: { id: group.id } });
+    result.optionGroups.push(group.key);
   }
 
   return result;

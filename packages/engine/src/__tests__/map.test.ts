@@ -2,8 +2,8 @@ import {
   AREAS,
   ITEM_PLACEMENTS,
   ITEMS,
-  MONSTERS,
-  MONSTER_SPAWNS,
+  HOSTILES,
+  HOSTILE_SPAWNS,
   ROOMS,
   findArea,
 } from "../seed/fixtures/index.js";
@@ -161,28 +161,28 @@ describe("areas", () => {
 
 /* ── spawns ───────────────────────────────────────────────────── */
 
-describe("monster spawns", () => {
-  const monsterBySlug = new Map(MONSTERS.map((m) => [m.slug, m]));
+describe("hostile spawns", () => {
+  const hostileBySlug = new Map(HOSTILES.map((m) => [m.slug, m]));
 
-  it("places every spawn in a room and a monster that exist", () => {
-    for (const spawn of MONSTER_SPAWNS) {
+  it("places every spawn in a room and a hostile that exist", () => {
+    for (const spawn of HOSTILE_SPAWNS) {
       expect(byKey.get(spawn.roomEnumKey)).toBeDefined();
-      expect(monsterBySlug.get(spawn.monsterSlug)).toBeDefined();
+      expect(hostileBySlug.get(spawn.hostileSlug)).toBeDefined();
     }
   });
 
-  it("keeps every monster inside its area's declared level band", () => {
+  it("keeps every hostile inside its area's declared level band", () => {
     // A band that says 5–8 with a level-1 rat in it is a content bug, and
     // the declaration exists precisely so this can be checked.
     const violations: string[] = [];
-    for (const spawn of MONSTER_SPAWNS) {
+    for (const spawn of HOSTILE_SPAWNS) {
       const room = byKey.get(spawn.roomEnumKey);
-      const monster = monsterBySlug.get(spawn.monsterSlug);
+      const hostile = hostileBySlug.get(spawn.hostileSlug);
       const area = room ? findArea(room.area) : undefined;
-      if (!room || !monster || !area) continue;
-      if (monster.level < area.minLevel || monster.level > area.maxLevel) {
+      if (!room || !hostile || !area) continue;
+      if (hostile.level < area.minLevel || hostile.level > area.maxLevel) {
         violations.push(
-          `${spawn.monsterSlug} (lv ${monster.level}) in ${area.key} (lv ${area.minLevel}-${area.maxLevel})`,
+          `${spawn.hostileSlug} (lv ${hostile.level}) in ${area.key} (lv ${area.minLevel}-${area.maxLevel})`,
         );
       }
     }
@@ -195,7 +195,7 @@ describe("monster spawns", () => {
         ROOMS.filter((r) => r.area === area.key).map((r) => r.enumKey),
       );
       expect(
-        MONSTER_SPAWNS.some((s) => roomsHere.has(s.roomEnumKey)),
+        HOSTILE_SPAWNS.some((s) => roomsHere.has(s.roomEnumKey)),
       ).toBe(true);
     }
   });
@@ -203,8 +203,8 @@ describe("monster spawns", () => {
   it("puts more experience on offer further out", () => {
     // The point of a second area is somewhere better to level.
     const xpIn = (key: string) =>
-      MONSTER_SPAWNS.filter((s) => byKey.get(s.roomEnumKey)?.area === key)
-        .map((s) => monsterBySlug.get(s.monsterSlug)?.experience ?? 0)
+      HOSTILE_SPAWNS.filter((s) => byKey.get(s.roomEnumKey)?.area === key)
+        .map((s) => hostileBySlug.get(s.hostileSlug)?.experience ?? 0)
         .reduce((a, b) => a + b, 0);
     expect(xpIn("barrowdeep-deep")).toBeGreaterThan(xpIn("townsmee"));
   });

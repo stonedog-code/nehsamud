@@ -7,14 +7,15 @@ import {
   deriveAttributes,
   deriveCharacter,
   maxHpForLevel,
+  type AttributeMods,
 } from "../character.js";
 import { gainsForLevel } from "../progression.js";
-import { CLASSES, RACES } from "../seed/fixtures/index.js";
+import { CHARACTER_OPTION_GROUPS } from "../seed/fixtures/index.js";
 
 /**
- * Race and class becoming real numbers.
+ * Character-creation choices becoming real numbers.
  *
- * `mud.race` and `mud.class` carried seven modifier columns each, seeded
+ * The option tables carried seven modifier columns each, seeded
  * with real values, that nothing read — and `createPlayer` wrote no
  * attributes at all, so every character had 10 across the board. A Dwarf
  * Warrior and a Halfling Mage were the same character.
@@ -24,30 +25,43 @@ import { CLASSES, RACES } from "../seed/fixtures/index.js";
  * backwards; asserting that the tough one is tougher does not.
  */
 
-const race = (slug: string) => {
-  const found = RACES.find((r) => r.slug === slug);
-  if (!found) throw new Error(`no race fixture "${slug}"`);
+const option = (groupKey: string, slug: string) => {
+  const group = CHARACTER_OPTION_GROUPS.find((g) => g.key === groupKey);
+  const found = group?.options.find((o) => o.slug === slug);
+  if (!found) throw new Error(`no ${groupKey} option "${slug}"`);
   return found;
 };
-const klass = (slug: string) => {
-  const found = CLASSES.find((c) => c.slug === slug);
-  if (!found) throw new Error(`no class fixture "${slug}"`);
-  return found;
-};
+const race = (slug: string) => option("race", slug);
+const klass = (slug: string) => option("class", slug);
+/** The fixture's two axes, answered — what a real creation produces. */
+const both = (raceSlug: string, classSlug: string) => [
+  race(raceSlug),
+  klass(classSlug),
+];
+
+/** Every combination of one option per declared group. */
+const everyCombination = () =>
+  CHARACTER_OPTION_GROUPS.reduce<AttributeMods[][]>(
+    (acc, group) =>
+      acc.flatMap((partial) =>
+        group.options.map((option) => [...partial, option]),
+      ),
+    [[]],
+  );
 
 /* ── attributes ───────────────────────────────────────────────── */
 
 describe("deriveAttributes", () => {
   it("adds race and class to the base", () => {
     // Dwarf str +2, Warrior str +2.
-    const attrs = deriveAttributes(race("dwarf"), klass("warrior"));
+    const attrs = deriveAttributes(both("dwarf", "warrior"));
     expect(attrs.strength).toBe(BASE_ATTRIBUTE + 4);
     expect(attrs.constitution).toBe(BASE_ATTRIBUTE + 4);
   });
 
   it("applies penalties as well as bonuses", () => {
     // Halfling str -1, Mage str -1.
-    expect(deriveAttributes(race("halfling"), klass("mage")).strength).toBe(
+    expect(deriveAttributes(both("halfling", "mage")).strength).toBe(
       BASE_ATTRIBUTE - 2,
     );
   });
@@ -62,22 +76,44 @@ describe("deriveAttributes", () => {
       dexterityMod: -99,
       luckMod: -99,
     };
-    const attrs = deriveAttributes(brutal, brutal);
+    const attrs = deriveAttributes([brutal, brutal]);
     for (const value of Object.values(attrs)) {
       expect(value).toBe(MIN_ATTRIBUTE);
     }
   });
 
   it("gives every seeded combination a full set of positive attributes", () => {
-    for (const r of RACES) {
-      for (const c of CLASSES) {
-        const attrs = deriveAttributes(r, c);
-        expect(Object.keys(attrs)).toHaveLength(7);
-        for (const value of Object.values(attrs)) {
-          expect(value).toBeGreaterThanOrEqual(MIN_ATTRIBUTE);
-        }
+    for (const combination of everyCombination()) {
+      const attrs = deriveAttributes(combination);
+      expect(Object.keys(attrs)).toHaveLength(7);
+      for (const value of Object.values(attrs)) {
+        expect(value).toBeGreaterThanOrEqual(MIN_ATTRIBUTE);
       }
     }
+  });
+
+  it("builds a character from no choices at all", () => {
+    // A pack may declare no axes — the care-centre world, where you are
+    // simply a resident. That has to produce base attributes rather than an
+    // empty object or a throw, because the create path calls this with
+    // exactly what the pack declared.
+    expect(deriveAttributes([])).toEqual({
+      strength: BASE_ATTRIBUTE,
+      intelligence: BASE_ATTRIBUTE,
+      wisdom: BASE_ATTRIBUTE,
+      charisma: BASE_ATTRIBUTE,
+      constitution: BASE_ATTRIBUTE,
+      dexterity: BASE_ATTRIBUTE,
+      luck: BASE_ATTRIBUTE,
+    });
+  });
+
+  it("does not care what order the axes come in", () => {
+    // Addition, so a pack reordering its groups must not change anybody's
+    // character.
+    expect(deriveAttributes(both("dwarf", "warrior"))).toEqual(
+      deriveAttributes([klass("warrior"), race("dwarf")]),
+    );
   });
 });
 
@@ -156,8 +192,8 @@ describe("baseDamageFor", () => {
   it("keeps the class spread smaller than a weapon upgrade", () => {
     // A Maul is +14. If being an Orc Warrior instead of a Halfling Mage beat
     // that, equipment would stop mattering and `equip` would be decoration.
-    const strongest = deriveCharacter(race("orc"), klass("warrior"));
-    const weakest = deriveCharacter(race("halfling"), klass("mage"));
+    const strongest = deriveCharacter(both("orc", "warrior"));
+    const weakest = deriveCharacter(both("halfling", "mage"));
     expect(strongest.baseDamage - weakest.baseDamage).toBeLessThan(14);
   });
 });
@@ -167,8 +203,8 @@ describe("baseDamageFor", () => {
 describe("deriveCharacter", () => {
   it("makes a Dwarf Warrior tougher and stronger than a Halfling Mage", () => {
     // The failure scenario named in NEH-621, asserted directionally.
-    const dwarfWarrior = deriveCharacter(race("dwarf"), klass("warrior"));
-    const halflingMage = deriveCharacter(race("halfling"), klass("mage"));
+    const dwarfWarrior = deriveCharacter(both("dwarf", "warrior"));
+    const halflingMage = deriveCharacter(both("halfling", "mage"));
 
     expect(dwarfWarrior.maxHp).toBeGreaterThan(halflingMage.maxHp);
     expect(dwarfWarrior.baseDamage).toBeGreaterThan(halflingMage.baseDamage);
@@ -180,8 +216,8 @@ describe("deriveCharacter", () => {
   it("makes the nimble ones nimble", () => {
     // Not everything is a hit-point race: a Halfling Rogue should lead on
     // dexterity even though it loses on health.
-    const halflingRogue = deriveCharacter(race("halfling"), klass("rogue"));
-    const dwarfWarrior = deriveCharacter(race("dwarf"), klass("warrior"));
+    const halflingRogue = deriveCharacter(both("halfling", "rogue"));
+    const dwarfWarrior = deriveCharacter(both("dwarf", "warrior"));
     expect(halflingRogue.attributes.dexterity).toBeGreaterThan(
       dwarfWarrior.attributes.dexterity,
     );
@@ -191,22 +227,18 @@ describe("deriveCharacter", () => {
     // A table edit that flattened every modifier to zero would pass every
     // other test in this file.
     const shapes = new Set<string>();
-    for (const r of RACES) {
-      for (const c of CLASSES) {
-        const d = deriveCharacter(r, c);
-        shapes.add(`${d.maxHp}/${d.baseDamage}`);
-      }
+    for (const combination of everyCombination()) {
+      const d = deriveCharacter(combination);
+      shapes.add(`${d.maxHp}/${d.baseDamage}`);
     }
     expect(shapes.size).toBeGreaterThan(1);
   });
 
   it("leaves no seeded combination unplayable", () => {
-    for (const r of RACES) {
-      for (const c of CLASSES) {
-        const d = deriveCharacter(r, c);
-        expect(d.maxHp).toBeGreaterThan(0);
-        expect(d.baseDamage).toBeGreaterThan(0);
-      }
+    for (const combination of everyCombination()) {
+      const d = deriveCharacter(combination);
+      expect(d.maxHp).toBeGreaterThan(0);
+      expect(d.baseDamage).toBeGreaterThan(0);
     }
   });
 });

@@ -24,7 +24,7 @@ export interface AreaFixture {
   name: string;
   description: string;
   /**
-   * Lowest and highest monster level the area is built for.
+   * Lowest and highest hostile level the area is built for.
    *
    * Declared rather than derived so a test can assert the spawn tables
    * actually match the promise. A band that says 5–8 with a level-1 rat in

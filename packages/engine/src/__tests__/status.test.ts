@@ -5,7 +5,7 @@ import { MAX_LEVEL, xpForLevel } from "../progression.js";
 import { DEFAULT_MAX_HP } from "../world/session.js";
 import type { CharacterSheet, SessionState } from "../world/session.js";
 import { WorldState } from "../world/world-state.js";
-import type { CachedMonster, CachedRoom } from "../world/world-state.js";
+import type { CachedHostile, CachedRoom } from "../world/world-state.js";
 
 /**
  * `statistics`, `experience` and `rest` — the verbs that let a player see
@@ -38,8 +38,13 @@ const INN: CachedRoom = {
 };
 
 const SHEET: CharacterSheet = {
-  raceName: "Human",
-  className: "Warrior",
+  options: [
+
+    { groupName: "Race", optionName: "Human" },
+
+    { groupName: "Class", optionName: "Warrior" },
+
+  ],
   strength: 14,
   intelligence: 9,
   wisdom: 10,
@@ -49,7 +54,7 @@ const SHEET: CharacterSheet = {
   luck: 8,
 };
 
-const GOBLIN: CachedMonster = {
+const GOBLIN: CachedHostile = {
   id: "mon-goblin",
   slug: "goblin",
   name: "a goblin",
@@ -58,13 +63,12 @@ const GOBLIN: CachedMonster = {
   baseHp: 8,
   baseDamage: 2,
   experience: 15,
-  alignment: "evil",
-  mobType: "humanoid",
+  tags: ["humanoid", "evil"],
 };
 
 function buildWorld(mode: "exploration" | "pve" = "pve"): WorldState {
   const w = new WorldState(mode);
-  // Exploration worlds refuse to spawn monsters at all, so the catalog is
+  // Exploration worlds refuse to spawn hostiles at all, so the catalog is
   // hydrated either way and only the pve worlds ever populate a room.
   w.hydrate([SQUARE, INN], [], [GOBLIN], [], []);
   return w;
@@ -147,8 +151,29 @@ describe("statistics", () => {
     // behind them. Throwing there would make `statistics` the one verb that
     // can crash a fresh connection.
     const text = await run(buildWorld(), session({ sheet: undefined }), "stats");
-    expect(text).toContain("Race and class unknown");
     expect(text).toContain("Aria — level 1");
+    expect(text).toContain("Health:");
+  });
+
+  it("omits the description line for a character with no chosen options", async () => {
+    // A pack that declares no axes — the care-centre world. The old code
+    // printed "Race and class unknown" here, which for that world is a
+    // sentence about two things it does not have.
+    const sheet = {
+      options: [],
+      strength: 10,
+      intelligence: 10,
+      wisdom: 10,
+      charisma: 10,
+      constitution: 10,
+      dexterity: 10,
+      luck: 10,
+    };
+    const lines = (
+      await run(buildWorld(), session({ sheet }), "stats")
+    ).split("\n");
+    expect(lines[0]).toBe("Aria — level 1");
+    expect(lines[1]).toMatch(/^Health:/);
   });
 
   it("says there is nothing left to earn at the level cap", async () => {
@@ -229,9 +254,9 @@ describe("rest", () => {
     expect(s.currentHp).toBe(30);
   });
 
-  it("refuses while a monster is in the room, and clears the flag", async () => {
+  it("refuses while a hostile is in the room, and clears the flag", async () => {
     const w = buildWorld();
-    w.spawnMonster("goblin", SQUARE.id);
+    w.spawnHostile("goblin", SQUARE.id);
     const s = session({ currentHp: 5, maxHp: 30, resting: true });
     const text = await run(w, s, "rest");
     expect(text).toContain("cannot rest");
@@ -275,7 +300,7 @@ describe("resting ends when it should", () => {
 
   it("is not left set by a refused rest", async () => {
     const w = buildWorld();
-    w.spawnMonster("goblin", SQUARE.id);
+    w.spawnHostile("goblin", SQUARE.id);
     const s = session({ resting: true });
     await run(w, s, "rest");
     expect(s.resting).toBe(false);
