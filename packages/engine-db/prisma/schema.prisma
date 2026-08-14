@@ -70,6 +70,19 @@ model MudPlayer {
   roomId      String?  @map("room_id") @db.Uuid
   level       Int      @default(1)
   experience  Int      @default(0)
+  /// Deaths remaining before this character starts over.
+  ///
+  /// A death costs one. At zero the character is REBORN rather than lost:
+  /// it keeps its name and a fraction of its experience, and picks its
+  /// creation options again. So the stakes are real without the ending
+  /// being "delete your character", which is the version people quit over.
+  lives       Int      @default(9)
+  /// How many times this character has been through that.
+  ///
+  /// Kept because it is the only durable record of it — experience is
+  /// reduced rather than reset, so a level-40 character on its third life
+  /// is otherwise indistinguishable from one on its first.
+  rebirths    Int      @default(0)
   currentHp   Int      @default(10) @map("current_hp")
   maxHp       Int      @default(10) @map("max_hp")
   /// Stats — the seven core attributes. Values come from the chosen

@@ -1,3 +1,4 @@
+import { STARTING_LIVES } from "../progression.js";
 import { dispatch } from "../commands/dispatch.js";
 import { parseCommand } from "../commands/parser.js";
 import { DEFAULT_MAX_HP, SessionRegistry } from "../world/session.js";
@@ -285,6 +286,8 @@ describe("without a session registry", () => {
       maxHp: DEFAULT_MAX_HP,
       experience: 0,
       level: 1,
+      lives: STARTING_LIVES,
+      rebirths: 0,
       inventory: [],
       defeated: false,
     resting: false,

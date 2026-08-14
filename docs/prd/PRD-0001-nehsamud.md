@@ -150,6 +150,30 @@ Numbered and testable. **MUST** is v1 scope; **SHOULD** is v1 if it fits.
 - **R19** The world holds enough content to reach 100 without grinding one
   room.
 
+#### Lives and rebirth — SETTLED
+
+- **R19a** The level cap is **100**. Confirmed rather than lowered.
+- **R19b** A character has **nine lives**. A death — to a hostile or to
+  another player — spends one and costs nothing else.
+- **R19c** On the ninth death the character is **reborn**: it keeps its name
+  and **30% of its accumulated experience**, its level is re-derived from
+  that figure, its lives reset to nine, and its rebirth count increments.
+- **R19d** A reborn character **chooses its creation options again**.
+  Rebirth is therefore the only way to change build, which is deliberate:
+  the options are otherwise permanent.
+
+**Not permadeath, and that is the decision.** Deleting the character is a
+different product, and this engine also serves an audience for whom losing
+everything to one bad fight is the moment they stop playing. Cutting
+experience keeps the loss real — a level 60 character returns around level
+40 — while leaving something to come back to.
+
+**It also answers "is 100 reachable".** At the measured rate (~1,335
+experience per full clear of 22 spawn points, refilling every 90s) the cap
+is ~182 hours of pure combat at the theoretical maximum. Nine lives makes
+that a survivable journey rather than a coin flip, and rebirth means a
+player who exhausts them is set back rather than ended.
+
 ### 4.5 Scripting
 
 - **R20** Players can write scripts that issue game commands.
@@ -334,10 +358,16 @@ work twice, across a repository boundary.
   server-side can offer, and who bears the cost of a runaway script.
 - **OQ2 — Standalone auth.** Its own accounts, `stonedog-auth`, or a dev-only
   minter? Blocks the standalone app leaving dev.
-- **OQ3 — Death cost in PVP.** R29 puts only items at stake. Is that enough
+- ~~**OQ3 — Death cost in PVP.**~~ **Answered by R19b–d.** Items are at
+  stake *and* a life. A PVP death is an ordinary death: it spends one of
+  nine, and the ninth reborns the victim at 30% experience with a new build.
+  So the mode's stakes are the same as the world's, which is the answer that
+  needs no second rule to keep in step. Original text: R29 puts only items at stake. Is that enough
   risk for the mode to mean anything?
-- **OQ4 — Experience curve shape.** Exponential to 100 is traditional and
-  brutal. What total playtime is level 100 meant to represent?
+- ~~**OQ4 — Experience curve shape.**~~ **Answered: the cap stays 100** and
+  the curve is unchanged. ~182 hours of pure combat at the theoretical
+  maximum rate is the intended shape — traditional, and survivable because
+  of nine lives rather than in spite of the curve.
 - ~~**OQ5 — Engine/DB boundary.**~~ **Answered by PRD-0002.** The schema stays
   in this repo; the host-specific part of it — `mud.player.user_id`'s
   cross-schema FK to a `public.user` table this repo does not own — is

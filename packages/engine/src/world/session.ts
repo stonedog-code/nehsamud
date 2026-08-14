@@ -12,6 +12,8 @@
  * connection's lifetime.
  */
 
+import { STARTING_LIVES } from "../progression.js";
+
 /** One stack the player is carrying. */
 export interface InventoryEntry {
   itemId: string;
@@ -74,6 +76,24 @@ export interface SessionState {
    * it is a CACHE of the rows, not the truth. The database is the record.
    */
   inventory: InventoryEntry[];
+  /**
+   * Deaths remaining before this character starts over (NEH-664).
+   *
+   * On the session as well as the row because every death path reads it and
+   * the row is written back after the command, not during it.
+   */
+  lives: number;
+  /** How many times this character has already started over. */
+  rebirths: number;
+  /**
+   * Set when the last life was spent and the player has not yet chosen what
+   * to come back as.
+   *
+   * Rebirth is the ONLY way to change a build, so it re-asks rather than
+   * silently keeping the old one — and it is a flag rather than an immediate
+   * prompt because the death happens inside somebody else's command.
+   */
+  pendingRebirth?: boolean;
   /** True while the player has 0 HP. The combat resolver flips
    * this; the next command (typically `look`) re-spawns them at
    * the town square. */
@@ -157,6 +177,8 @@ export class SessionRegistry {
       maxHp: DEFAULT_MAX_HP,
       experience: 0,
       level: 1,
+      lives: STARTING_LIVES,
+      rebirths: 0,
       inventory: [],
       defeated: false,
       resting: false,

@@ -78,6 +78,17 @@ function renderRoom(world: WorldState, room: CachedRoom): string[] {
 }
 
 export const lookHandler: CommandHandler = ({ world, session }) => {
+  if (session.defeated && session.pendingRebirth) {
+    // Recovered, but who they are is now an open question. The ws layer
+    // collects the answers; `look` is just where a defeated player is told
+    // there is one.
+    session.defeated = false;
+    session.currentHp = session.maxHp;
+    return reply(
+      "You wake somewhere quiet, remade but unshaped.",
+      "Choose what you come back as — the first question is next.",
+    );
+  }
   if (session.defeated) {
     const spawn = world.getRoomByEnumKey(SPAWN_ROOM_ENUM_KEY);
     if (!spawn) {

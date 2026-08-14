@@ -188,3 +188,83 @@ export function awardExperience(
     maxHpGained,
   };
 }
+
+/* ── Lives and rebirth ─────────────────────────────────────────────
+ *
+ * The answer to "what does dying cost", which was open until now and is the
+ * thing that decides whether a mode means anything (NEH-664, NEH-697).
+ *
+ * A character has NINE LIVES. A death spends one. At zero it is REBORN — it
+ * keeps its name, keeps a fraction of its experience, and chooses its
+ * creation options again.
+ *
+ * NOT PERMADEATH, DELIBERATELY. Deleting the character is a different
+ * product, and this engine also serves an audience for whom losing
+ * everything to one bad fight is the moment they stop playing. Cutting
+ * experience keeps the loss real — a level 60 character comes back around
+ * level 40 — while leaving something to come back to.
+ *
+ * REBIRTH IS ALSO THE ONLY WAY TO CHANGE BUILD. Creation options are
+ * otherwise permanent, so nine lives is both the cost of dying and the
+ * mechanism for becoming something else. That is why it re-asks rather than
+ * silently keeping what you had.
+ */
+
+/** Lives a character starts with, and returns to after a rebirth. */
+export const STARTING_LIVES = 9;
+
+/** Fraction of accumulated experience a reborn character keeps. */
+export const REBIRTH_EXPERIENCE_RETAINED = 0.3;
+
+export interface DeathOutcome {
+  /** Lives left after this death. */
+  lives: number;
+  /** True when this death spent the last one. */
+  reborn: boolean;
+  /** Experience after the death — unchanged unless reborn. */
+  experience: number;
+  /** Level implied by that experience. */
+  level: number;
+  /** Total rebirths after this death. */
+  rebirths: number;
+}
+
+/**
+ * Apply one death.
+ *
+ * Pure, and takes the whole prior state rather than mutating a session, so
+ * the rule is testable without a world — and so the ws layer, the PVP path
+ * and the monster path cannot each grow their own slightly different
+ * version of it.
+ */
+export function applyDeath(prior: {
+  lives: number;
+  experience: number;
+  rebirths: number;
+}): DeathOutcome {
+  const lives = prior.lives - 1;
+  if (lives > 0) {
+    // An ordinary death. Experience is untouched — the cost is the life,
+    // and charging twice for one death would make the ninth meaningless by
+    // comparison.
+    return {
+      lives,
+      reborn: false,
+      experience: prior.experience,
+      level: levelForXp(prior.experience),
+      rebirths: prior.rebirths,
+    };
+  }
+
+  // The last life. `Math.floor` rather than round, so the retained figure is
+  // never generous by a point and the arithmetic is the same in every
+  // direction.
+  const experience = Math.floor(prior.experience * REBIRTH_EXPERIENCE_RETAINED);
+  return {
+    lives: STARTING_LIVES,
+    reborn: true,
+    experience,
+    level: levelForXp(experience),
+    rebirths: prior.rebirths + 1,
+  };
+}

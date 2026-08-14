@@ -516,6 +516,8 @@ describe("savePlayerState", () => {
         currentHp: 22,
         maxHp: 30,
         experience: 100,
+        lives: 7,
+        rebirths: 1,
       },
     );
     expect(prisma.mudPlayer.update).toHaveBeenCalledTimes(1);

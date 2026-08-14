@@ -34,6 +34,8 @@ import {
 } from "../../character.js";
 import {
   MAX_LEVEL,
+  REBIRTH_EXPERIENCE_RETAINED,
+  applyDeath,
   awardExperience,
   xpToNextLevel,
 } from "../../progression.js";
@@ -186,9 +188,7 @@ export const attackHandler: CommandHandler = ({
   );
   if (session.currentHp === 0) {
     session.defeated = true;
-    lines.push(
-      "You collapse. The world goes dark. (Type `look` to recover.)",
-    );
+    lines.push(...describeDeath(session));
   }
   return reply(...lines);
 };
@@ -300,11 +300,9 @@ function attackPlayer(
   victim.inventory = [];
 
   lines.push(`${name} collapses.`);
-  broadcasts.push({
-    scope: "user",
-    userId: victim.userId,
-    message: "You collapse. The world goes dark. (Type `look` to recover.)",
-  });
+  for (const message of describeDeath(victim)) {
+    broadcasts.push({ scope: "user", userId: victim.userId, message });
+  }
   if (corpse) {
     lines.push(
       `Their belongings spill across the ground. (\`loot ${name}\` to take them.)`,
@@ -321,4 +319,43 @@ function attackPlayer(
   // people farmed would be the ones with the least reason to stay. What the
   // winner gets is the loot, which is what the mode is about.
   return { lines, broadcasts };
+}
+
+
+/**
+ * Spend a life, and say what it cost.
+ *
+ * ONE PLACE, called by both death paths. A monster kill and a PVP kill are
+ * the same event as far as the rule is concerned, and two copies of it is
+ * how they drift into disagreeing about the ninth life.
+ *
+ * Mutates the session because the caller has already decided the player is
+ * down; the arithmetic itself lives in `applyDeath` and is pure.
+ */
+function describeDeath(session: SessionState): string[] {
+  const outcome = applyDeath(session);
+  session.lives = outcome.lives;
+  session.rebirths = outcome.rebirths;
+  session.experience = outcome.experience;
+  session.level = outcome.level;
+  session.pendingPersist = true;
+
+  if (!outcome.reborn) {
+    const left = outcome.lives;
+    return [
+      "You collapse. The world goes dark. (Type `look` to recover.)",
+      left === 1
+        ? "This was your eighth life. One remains — the next death starts you over."
+        : `Lives remaining: ${left}.`,
+    ];
+  }
+
+  // The ninth. Say plainly what happened and what is about to be asked, so
+  // the option prompt that follows is not a mystery.
+  session.pendingRebirth = true;
+  return [
+    "You collapse, and this time you do not get up.",
+    `That was your last life. You begin again as ${session.characterName ?? "yourself"}, carrying ${Math.round(REBIRTH_EXPERIENCE_RETAINED * 100)}% of what you learned — ${outcome.experience} experience, level ${outcome.level}.`,
+    "Who you come back as is up to you. (Type `look` to choose.)",
+  ];
 }

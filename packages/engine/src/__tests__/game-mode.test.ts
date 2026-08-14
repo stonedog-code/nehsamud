@@ -1,3 +1,4 @@
+import { STARTING_LIVES } from "../progression.js";
 /**
  * Game modes — the Exploration build's safety property.
  *
@@ -77,6 +78,8 @@ function sessionAt(roomId: string): SessionState {
     maxHp: 30,
     experience: 0,
     level: 1,
+    lives: STARTING_LIVES,
+    rebirths: 0,
     inventory: [],
     defeated: false,
     resting: false,

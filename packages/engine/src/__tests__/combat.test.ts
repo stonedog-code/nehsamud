@@ -11,6 +11,7 @@ import {
   HP_PER_LEVEL,
   levelForXp,
   xpForLevel,
+  STARTING_LIVES,
 } from "../progression.js";
 import { parseCommand } from "../commands/parser.js";
 import { DEFAULT_MAX_HP } from "../world/session.js";
@@ -79,6 +80,8 @@ function newSession(roomId: string): SessionState {
     maxHp: DEFAULT_MAX_HP,
     experience: 0,
     level: 1,
+    lives: STARTING_LIVES,
+    rebirths: 0,
     inventory: [],
     defeated: false,
     resting: false,
