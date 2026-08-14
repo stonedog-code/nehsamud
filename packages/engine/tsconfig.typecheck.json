@@ -1,0 +1,22 @@
+{
+  // Typecheck config. Same compiler options as the build, but it also SEES
+  // THE TESTS.
+  //
+  // `tsconfig.json` excludes `**/*.test.ts` because it is what `npm run
+  // build` emits from, and test files have no business in `dist/`. The
+  // side effect was that `npm run typecheck` — the same config with
+  // `--noEmit` — never looked at a test file either. So the house gate
+  // (typecheck + lint + build) reported green on a tree where whole suites
+  // could not compile, and the first sign of trouble was jest reporting
+  // "Test suite failed to run" much later, from a confusing direction.
+  //
+  // Caught live twice: NEH-625 added a required field to `SessionState` and
+  // broke seven fixtures with typecheck green throughout, and NEH-651
+  // reshaped the player record and broke eleven suites the same way.
+  //
+  // Two configs rather than one, because the two jobs genuinely disagree
+  // about the same setting: the build must not see tests, and the typecheck
+  // must. Overriding `exclude` here is the whole file.
+  "extends": "./tsconfig.json",
+  "exclude": ["dist", "node_modules"]
+}
