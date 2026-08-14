@@ -1,42 +1,34 @@
 /**
  * MudPlayer read/write layer.
  *
- * Phase 7 introduces persistence — until now the session lived in
- * memory and was lost at every disconnect. This module:
+ * Loads a character on AUTH, creates one when the player has none, and
+ * writes the session's mutable state back after every dispatch. Save is
+ * idempotent: if nothing changed since the last save, the update still runs
+ * but writes equal values.
  *
- *   - On AUTH, looks up the MudPlayer for the userId or creates a
- *     fresh "Traveler-…" character with the first seeded race +
- *     class. Demo flows don't need character-creation UI; we
- *     just spawn them.
- *   - Loads currentRoomId / currentHp / maxHp / experience from
- *     the player row into the session.
- *   - Persists those fields back to the row after every dispatch.
- *     Save is idempotent: if nothing actually changed since the
- *     last save, the update still runs but writes equal values.
- *     Phase 8 can replace this with a dirty-flag check if write
- *     pressure becomes a real concern.
- *
- * Default character creation picks the first race/class returned
- * by Prisma (which is deterministic with the seed). Phase 10 will
- * wire apps/web's character-creation modal into this path so
- * players can pick their race and class.
+ * WHAT A CHARACTER IS BUILT FROM IS PACK DATA, NOT A SCHEMA CONSTANT.
+ * This module used to read `mud.race` and `mud.class` by name, because the
+ * database had exactly those two tables. It now reads whatever option groups
+ * the pack declared: two for the fantasy world, possibly none for a care
+ * centre, possibly three for something later. Everything below is written
+ * against "a set of groups", so adding an axis is a seed change and not a
+ * code change.
  */
 
 import { randomUUID } from "node:crypto";
 
 import type { PrismaClient } from "@nehsamud/engine-db";
 
-import { deriveCharacter } from "../character.js";
+import { deriveCharacter, type AttributeMods } from "../character.js";
 import { levelForXp } from "../progression.js";
 import type { InventoryEntry, SessionState } from "../world/session.js";
-import { DEFAULT_MAX_HP } from "../world/session.js";
 
 /**
- * The seven core attributes, post-race/class modifier.
+ * The seven core attributes, after every chosen option's modifiers.
  *
- * Stored on the player row rather than recomputed from race + class on every
+ * Stored on the player row rather than recomputed from the choices on every
  * read, because a levelling or equipment effect will eventually change one
- * without changing either of those.
+ * without changing any of them.
  */
 export interface PlayerAttributes {
   strength: number;
@@ -48,19 +40,34 @@ export interface PlayerAttributes {
   luck: number;
 }
 
+/** One axis of a character, resolved for display. */
+export interface SelectedOption {
+  /** Group key, e.g. "race". */
+  groupKey: string;
+  /** Group display name, e.g. "Race". */
+  groupName: string;
+  optionSlug: string;
+  /** Option display name, e.g. "Human". */
+  optionName: string;
+}
+
 export interface PlayerRecord {
   id: string;
-  userId: string;
+  ownerId: string;
   name: string;
   roomId: string | null;
   currentHp: number;
   maxHp: number;
   experience: number;
   level: number;
-  /** Display name of the chosen race, e.g. "Human". */
-  raceName: string;
-  /** Display name of the chosen class, e.g. "Warrior". */
-  className: string;
+  /**
+   * What this character was built from, in the pack's declared order.
+   *
+   * Empty is legitimate — a pack with no character-creation axes produces
+   * characters with none — so a caller rendering this must handle the empty
+   * case as a valid character rather than a missing one.
+   */
+  options: SelectedOption[];
   attributes: PlayerAttributes;
 }
 
@@ -71,7 +78,7 @@ export interface PlayerRecord {
  */
 const PLAYER_SELECT = {
   id: true,
-  userId: true,
+  ownerId: true,
   name: true,
   roomId: true,
   currentHp: true,
@@ -85,14 +92,18 @@ const PLAYER_SELECT = {
   constitution: true,
   dexterity: true,
   luck: true,
-  race: { select: { name: true } },
-  class: { select: { name: true } },
+  options: {
+    select: {
+      group: { select: { key: true, name: true, position: true } },
+      option: { select: { slug: true, name: true } },
+    },
+  },
 } as const;
 
-/** Row → PlayerRecord. The only place the relation shape is unpacked. */
-function toRecord(row: {
+/** The shape PLAYER_SELECT returns. */
+interface PlayerRow {
   id: string;
-  userId: string;
+  ownerId: string;
   name: string;
   roomId: string | null;
   currentHp: number;
@@ -106,20 +117,40 @@ function toRecord(row: {
   constitution: number;
   dexterity: number;
   luck: number;
-  race: { name: string };
-  class: { name: string };
-}): PlayerRecord {
+  options: Array<{
+    group: { key: string; name: string; position: number };
+    option: { slug: string; name: string };
+  }>;
+}
+
+/** Row → PlayerRecord. The only place the relation shape is unpacked. */
+function toRecord(row: PlayerRow): PlayerRecord {
   return {
     id: row.id,
-    userId: row.userId,
+    ownerId: row.ownerId,
     name: row.name,
     roomId: row.roomId,
     currentHp: row.currentHp,
     maxHp: row.maxHp,
     experience: row.experience,
     level: row.level,
-    raceName: row.race.name,
-    className: row.class.name,
+    // Sorted here rather than in the query: `position` lives on the related
+    // group, and a player's handful of options is not worth an orderBy on a
+    // join for. Ties break on key so the order is total — otherwise two
+    // groups sharing a position render in whatever order Postgres returned,
+    // and a character sheet reshuffles itself between logins.
+    options: [...row.options]
+      .sort(
+        (a, b) =>
+          a.group.position - b.group.position ||
+          a.group.key.localeCompare(b.group.key),
+      )
+      .map((o) => ({
+        groupKey: o.group.key,
+        groupName: o.group.name,
+        optionSlug: o.option.slug,
+        optionName: o.option.name,
+      })),
     attributes: {
       strength: row.strength,
       intelligence: row.intelligence,
@@ -133,29 +164,79 @@ function toRecord(row: {
 }
 
 /**
- * Look up the MudPlayer for this user. Returns null when the user
- * doesn't have a character yet — the caller (ws-server.ts) then
- * prompts the client to send a `create <name>` command and routes
- * the response through `createPlayer` below.
- *
- * Replaces the older `loadOrCreatePlayer` which silently spawned a
- * `Traveler-<random8>` character on every first AUTH. That behavior
- * meant the user-facing "first time you log in, pick a character
- * name" flow never had a chance to fire.
+ * Look up the character for this owner. Returns null when the owner
+ * doesn't have one yet — the caller (ws-server.ts) then runs the
+ * creation flow and routes the answers through `createPlayer` below.
  */
 export async function loadPlayer(
   prisma: PrismaClient,
-  userId: string,
+  ownerId: string,
 ): Promise<PlayerRecord | null> {
   const row = await prisma.mudPlayer.findFirst({
-    where: { userId },
+    where: { ownerId },
     select: PLAYER_SELECT,
   });
   return row ? toRecord(row) : null;
 }
 
-/** The seven modifier columns, shared by the race and class lookups. */
-const MOD_SELECT = {
+/** One choice a player may make. */
+export interface OptionChoice {
+  slug: string;
+  name: string;
+  description: string;
+}
+
+/** One axis of character creation, with the choices on it. */
+export interface OptionGroup {
+  key: string;
+  name: string;
+  description: string;
+  required: boolean;
+  options: OptionChoice[];
+}
+
+/**
+ * Every character-creation axis this world declares, in the order it asks
+ * them, each with its selectable options alphabetically.
+ *
+ * Returns an empty array for a pack that declares none, which is a world
+ * where you simply are who you are. Callers must not treat that as an
+ * unseeded database — the seed reports what it wrote, and a creation flow
+ * with nothing to ask should create the character.
+ */
+export async function listOptionGroups(
+  prisma: PrismaClient,
+): Promise<OptionGroup[]> {
+  const groups = await prisma.mudCharacterOptionGroup.findMany({
+    orderBy: [{ position: "asc" }, { key: "asc" }],
+    select: {
+      key: true,
+      name: true,
+      description: true,
+      required: true,
+      options: {
+        where: { selectable: true },
+        orderBy: { name: "asc" },
+        select: { slug: true, name: true, description: true },
+      },
+    },
+  });
+  return groups;
+}
+
+/**
+ * What a player picked, as groupKey → optionSlug.
+ *
+ * A map rather than named fields, because the axes are pack data: naming
+ * them here would put the assumption this change removed straight back.
+ */
+export type CharacterChoice = Record<string, string>;
+
+/** The seven modifier columns plus what is needed to validate a choice. */
+const OPTION_SELECT = {
+  id: true,
+  slug: true,
+  selectable: true,
   strengthMod: true,
   intelligenceMod: true,
   wisdomMod: true,
@@ -165,56 +246,27 @@ const MOD_SELECT = {
   luckMod: true,
 } as const;
 
-/** The race and class a player chose at creation. Both required. */
-export interface CharacterChoice {
-  raceSlug: string;
-  classSlug: string;
-}
-
-/** One playable option, for the prompts the text creation flow shows. */
-export interface PlayableOption {
-  slug: string;
-  name: string;
-}
-
-/** Playable races, alphabetically. */
-export async function listPlayableRaces(
-  prisma: PrismaClient,
-): Promise<PlayableOption[]> {
-  return prisma.mudRace.findMany({
-    where: { playable: true },
-    orderBy: { name: "asc" },
-    select: { slug: true, name: true },
-  });
-}
-
-/** Playable classes, alphabetically. */
-export async function listPlayableClasses(
-  prisma: PrismaClient,
-): Promise<PlayableOption[]> {
-  return prisma.mudClass.findMany({
-    where: { playable: true },
-    orderBy: { name: "asc" },
-    select: { slug: true, name: true },
-  });
-}
-
 /**
- * Create a brand-new MudPlayer at the given spawn room with the
- * provided name. Race + class default to the seed's first playable
- * entries (alphabetical) — the protocol still doesn't ship those
- * choices to the client. When a richer UX wants race/class picking,
- * extend this signature.
+ * Create a character for this owner at the given spawn room.
+ *
+ * Every REQUIRED group must be answered, and every answer must name a
+ * selectable option in the group it was given for. There is no default and
+ * no fallback: an earlier version took the alphabetically-first playable row
+ * when nothing said otherwise, and because nothing ever did say otherwise,
+ * every character in the database was the same race and class. A default
+ * here is indistinguishable from a working selection right up until someone
+ * reads the rows.
  *
  * Throws when:
  *   - The name is empty / blank.
- *   - Another user already owns the name (case-insensitive unique
- *     on `mud_player.name`).
- *   - The seed hasn't run (no playable race / class).
+ *   - A required group is unanswered.
+ *   - An answer names an unknown, unselectable, or wrong-group option.
+ *   - An answer names a group the pack does not declare.
+ *   - Another character already owns the name.
  */
 export async function createPlayer(
   prisma: PrismaClient,
-  userId: string,
+  ownerId: string,
   name: string,
   spawnRoomId: string,
   choice: CharacterChoice,
@@ -224,48 +276,66 @@ export async function createPlayer(
     throw new Error("createPlayer: name is required");
   }
 
-  // Both slugs are REQUIRED and looked up by slug — no `findFirst` fallback.
-  // The old version took the alphabetically-first playable row when nothing
-  // said otherwise, and because nothing ever did say otherwise, every
-  // character in the database is the same race and class. A default here is
-  // indistinguishable from a working selection right up until someone reads
-  // the rows, so there is no default.
-  const race = await prisma.mudRace.findUnique({
-    where: { slug: choice.raceSlug },
-    select: { id: true, playable: true, ...MOD_SELECT },
+  const groups = await prisma.mudCharacterOptionGroup.findMany({
+    select: { id: true, key: true, name: true, required: true },
   });
-  if (!race || !race.playable) {
-    throw new Error(
-      `createPlayer: "${choice.raceSlug}" is not a playable race.`,
-    );
+  const byKey = new Map(groups.map((g) => [g.key, g]));
+
+  // An answer for a group nobody declared is a caller bug — a stale client,
+  // a typo in a script — and silently dropping it would create a character
+  // that is not the one that was asked for.
+  for (const key of Object.keys(choice)) {
+    if (!byKey.has(key)) {
+      throw new Error(`createPlayer: "${key}" is not a character option group.`);
+    }
   }
-  const klass = await prisma.mudClass.findUnique({
-    where: { slug: choice.classSlug },
-    select: { id: true, playable: true, ...MOD_SELECT },
-  });
-  if (!klass || !klass.playable) {
-    throw new Error(
-      `createPlayer: "${choice.classSlug}" is not a playable class.`,
-    );
+
+  const selections: Array<{ groupId: string; optionId: string }> = [];
+  const mods: AttributeMods[] = [];
+  for (const group of groups) {
+    const slug = choice[group.key];
+    if (slug === undefined || slug.trim() === "") {
+      if (group.required) {
+        throw new Error(`createPlayer: "${group.name}" is required.`);
+      }
+      continue;
+    }
+    // Looked up by (group, slug), not slug alone: slugs are unique only
+    // within their group, so a global lookup could resolve an answer for one
+    // axis against an option belonging to another.
+    const option = await prisma.mudCharacterOption.findUnique({
+      where: { groupId_slug: { groupId: group.id, slug } },
+      select: OPTION_SELECT,
+    });
+    if (!option || !option.selectable) {
+      throw new Error(
+        `createPlayer: "${slug}" is not a selectable ${group.name}.`,
+      );
+    }
+    selections.push({ groupId: group.id, optionId: option.id });
+    mods.push(option);
   }
-  // The seven attribute columns were never written, so every player took
-  // the schema default of 10 across the board however they were built — and
-  // the modifier columns on race and class, seeded with real numbers, were
-  // read by nothing at all.
-  const { attributes, maxHp } = deriveCharacter(race, klass);
+
+  // The seven attribute columns were never written, so every player took the
+  // schema default of 10 across the board however they were built — and the
+  // modifier columns, seeded with real numbers, were read by nothing at all.
+  const { attributes, maxHp } = deriveCharacter(mods);
 
   const created = await prisma.mudPlayer.create({
     data: {
-      userId,
+      ownerId,
       name: trimmed,
-      raceId: race.id,
-      classId: klass.id,
       roomId: spawnRoomId,
       ...attributes,
       currentHp: maxHp,
       maxHp,
       experience: 0,
       lastSeenAt: new Date(),
+      // Written in the same statement as the player, so a character can
+      // never exist without the choices it was built from. Two statements
+      // would leave a window where a crash produces a character with no
+      // race, no class and no way to tell that is what happened.
+      options: { create: selections },
     },
     select: PLAYER_SELECT,
   });
@@ -282,28 +352,35 @@ export async function createPlayer(
  */
 export async function loadOrCreatePlayer(
   prisma: PrismaClient,
-  userId: string,
+  ownerId: string,
   spawnRoomId: string,
 ): Promise<PlayerRecord> {
-  const existing = await loadPlayer(prisma, userId);
+  const existing = await loadPlayer(prisma, ownerId);
   if (existing) return existing;
-  // This deprecated path has no player to ask, so it has to name a choice.
+  // This deprecated path has no player to ask, so it has to answer for them.
   // Stated here rather than defaulted inside createPlayer, so the one place
   // that still auto-picks is visible instead of being everyone's silent
-  // behaviour.
-  const [race] = await listPlayableRaces(prisma);
-  const [klass] = await listPlayableClasses(prisma);
-  if (!race || !klass) {
-    throw new Error(
-      "loadOrCreatePlayer: no playable race or class found. Run `npm run seed` first.",
-    );
+  // behaviour. First selectable option per group, alphabetically.
+  const groups = await listOptionGroups(prisma);
+  const choice: CharacterChoice = {};
+  for (const group of groups) {
+    const first = group.options[0];
+    if (!first) {
+      if (group.required) {
+        throw new Error(
+          `loadOrCreatePlayer: no selectable option for required group "${group.name}". Run \`npm run seed\` first.`,
+        );
+      }
+      continue;
+    }
+    choice[group.key] = first.slug;
   }
   return createPlayer(
     prisma,
-    userId,
+    ownerId,
     `Traveler-${randomUUID().slice(0, 8)}`,
     spawnRoomId,
-    { raceSlug: race.slug, classSlug: klass.slug },
+    choice,
   );
 }
 

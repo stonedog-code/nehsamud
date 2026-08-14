@@ -1,5 +1,5 @@
 /**
- * Phase 5 combat: attack handler + monster spawn/damage/respawn.
+ * Phase 5 combat: attack handler + hostile spawn/damage/respawn.
  *
  * Pure unit tests against a hydrated WorldState; no DB, no sockets.
  */
@@ -16,7 +16,7 @@ import { parseCommand } from "../commands/parser.js";
 import { DEFAULT_MAX_HP } from "../world/session.js";
 import type { SessionState } from "../world/session.js";
 import type {
-  CachedMonster,
+  CachedHostile,
   CachedRoom,
 } from "../world/world-state.js";
 import { WorldState } from "../world/world-state.js";
@@ -42,8 +42,8 @@ function buildWorld(): WorldState {
     area: "townsmee",
     imageName: null,
   };
-  const goblin: CachedMonster = {
-    id: "monster-goblin",
+  const goblin: CachedHostile = {
+    id: "hostile-goblin",
     slug: "goblin",
     name: "Goblin",
     description: "Wiry green creature.",
@@ -51,11 +51,10 @@ function buildWorld(): WorldState {
     baseHp: 8,
     baseDamage: 2,
     experience: 20,
-    alignment: "evil",
-    mobType: "humanoid",
+    tags: ["humanoid", "evil"],
   };
-  const ogre: CachedMonster = {
-    id: "monster-ogre",
+  const ogre: CachedHostile = {
+    id: "hostile-ogre",
     slug: "ogre",
     name: "Ogre",
     description: "Nine feet of slack-jawed muscle.",
@@ -63,11 +62,10 @@ function buildWorld(): WorldState {
     baseHp: 45,
     baseDamage: 50, // intentionally lethal vs. baseline player
     experience: 120,
-    alignment: "evil",
-    mobType: "humanoid",
+    tags: ["humanoid", "evil"],
   };
   // Explicitly PVE: this file is about combat, and a world defaults to
-  // exploration, which has no monsters to fight.
+  // exploration, which has no hostiles to fight.
   const w = new WorldState("pve");
   w.hydrate([square, lower], [], [goblin, ogre]);
   return w;
@@ -89,45 +87,45 @@ function newSession(roomId: string): SessionState {
 
 /* ── World spawn/damage/despawn ───────────────────────────────── */
 
-describe("WorldState — monster lifecycle", () => {
-  it("spawnMonster places a fresh instance in the room with full HP", async () => {
+describe("WorldState — hostile lifecycle", () => {
+  it("spawnHostile places a fresh instance in the room with full HP", async () => {
     const w = buildWorld();
-    const inst = w.spawnMonster("goblin", "room-lower");
+    const inst = w.spawnHostile("goblin", "room-lower");
     expect(inst.currentHp).toBe(8);
     expect(inst.maxHp).toBe(8);
-    expect(w.getMonstersInRoom("room-lower")).toHaveLength(1);
-    expect(w.liveMonsterCount()).toBe(1);
+    expect(w.getHostilesInRoom("room-lower")).toHaveLength(1);
+    expect(w.liveHostileCount()).toBe(1);
   });
 
-  it("damageMonster reduces hp and despawns at zero", async () => {
+  it("damageHostile reduces hp and despawns at zero", async () => {
     const w = buildWorld();
-    const inst = w.spawnMonster("goblin", "room-lower");
-    expect(w.damageMonster(inst.instanceId, 3)).toBe(5);
-    expect(w.damageMonster(inst.instanceId, 99)).toBe(0);
-    expect(w.getMonstersInRoom("room-lower")).toEqual([]);
-    expect(w.liveMonsterCount()).toBe(0);
+    const inst = w.spawnHostile("goblin", "room-lower");
+    expect(w.damageHostile(inst.instanceId, 3)).toBe(5);
+    expect(w.damageHostile(inst.instanceId, 99)).toBe(0);
+    expect(w.getHostilesInRoom("room-lower")).toEqual([]);
+    expect(w.liveHostileCount()).toBe(0);
   });
 
-  it("findMonsterInRoom matches by slug, instanceId, name, and first-name", async () => {
+  it("findHostileInRoom matches by slug, instanceId, name, and first-name", async () => {
     const w = buildWorld();
-    const inst = w.spawnMonster("goblin", "room-lower");
-    expect(w.findMonsterInRoom("goblin", "room-lower")?.instanceId).toBe(
+    const inst = w.spawnHostile("goblin", "room-lower");
+    expect(w.findHostileInRoom("goblin", "room-lower")?.instanceId).toBe(
       inst.instanceId,
     );
-    expect(w.findMonsterInRoom(inst.instanceId, "room-lower")?.slug).toBe(
+    expect(w.findHostileInRoom(inst.instanceId, "room-lower")?.slug).toBe(
       "goblin",
     );
-    expect(w.findMonsterInRoom("Goblin", "room-lower")?.slug).toBe("goblin");
-    expect(w.findMonsterInRoom("ogre", "room-lower")).toBeUndefined();
-    expect(w.findMonsterInRoom("", "room-lower")).toBeUndefined();
+    expect(w.findHostileInRoom("Goblin", "room-lower")?.slug).toBe("goblin");
+    expect(w.findHostileInRoom("ogre", "room-lower")).toBeUndefined();
+    expect(w.findHostileInRoom("", "room-lower")).toBeUndefined();
   });
 
-  it("spawnMonster throws on unknown slug or room", async () => {
+  it("spawnHostile throws on unknown slug or room", async () => {
     const w = buildWorld();
-    expect(() => w.spawnMonster("dragon", "room-lower")).toThrow(
-      /unknown monster slug/,
+    expect(() => w.spawnHostile("dragon", "room-lower")).toThrow(
+      /unknown hostile slug/,
     );
-    expect(() => w.spawnMonster("goblin", "room-void")).toThrow(
+    expect(() => w.spawnHostile("goblin", "room-void")).toThrow(
       /unknown roomId/,
     );
   });
@@ -147,7 +145,7 @@ describe("attack handler", () => {
     expect(lines.join(" ")).toBe("Attack what?");
   });
 
-  it("refuses when no matching monster is in the room", async () => {
+  it("refuses when no matching hostile is in the room", async () => {
     const w = buildWorld();
     const session = newSession("room-lower");
     const lines = (await dispatch({
@@ -158,9 +156,9 @@ describe("attack handler", () => {
     expect(lines.join(" ")).toContain('no "ghost" here');
   });
 
-  it("does player damage then monster counter on a survived swing", async () => {
+  it("does player damage then hostile counter on a survived swing", async () => {
     const w = buildWorld();
-    w.spawnMonster("goblin", "room-lower");
+    w.spawnHostile("goblin", "room-lower");
     const session = newSession("room-lower");
     // Seeded: damage now varies and a swing can miss, so a fixed-damage
     // assertion would be asserting the absence of the feature. Seed 2 lands
@@ -174,14 +172,14 @@ describe("attack handler", () => {
     expect(lines[0]).toContain("for 4 damage");
     expect(lines.some((l) => l.includes("HP left"))).toBe(true);
     expect(lines.some((l) => l.includes("for 2 damage"))).toBe(true);
-    expect(w.getMonstersInRoom("room-lower")).toHaveLength(1);
+    expect(w.getHostilesInRoom("room-lower")).toHaveLength(1);
     expect(session.currentHp).toBe(DEFAULT_MAX_HP - 2);
   });
 
-  it("kills the monster + awards XP when player damage equals or exceeds HP", async () => {
+  it("kills the hostile + awards XP when player damage equals or exceeds HP", async () => {
     const w = buildWorld();
-    w.spawnMonster("goblin", "room-lower"); // 8 HP
-    w.spawnMonster("goblin", "room-lower"); // a second one
+    w.spawnHostile("goblin", "room-lower"); // 8 HP
+    w.spawnHostile("goblin", "room-lower"); // a second one
     const session = newSession("room-lower");
     session.currentHp = 10_000; // the kill is the subject, not survival
     // Swing until it dies. Damage varies and blows can miss, so a fixed swing
@@ -191,12 +189,12 @@ describe("attack handler", () => {
     expect(result.response.lines.some((l) => l.includes("falls"))).toBe(true);
     expect(session.experience).toBe(20);
     // Second goblin still alive.
-    expect(w.getMonstersInRoom("room-lower")).toHaveLength(1);
+    expect(w.getHostilesInRoom("room-lower")).toHaveLength(1);
   });
 
   it("flips defeated on lethal counter, refuses subsequent attacks", async () => {
     const w = buildWorld();
-    w.spawnMonster("ogre", "room-lower"); // 50 dmg per round
+    w.spawnHostile("ogre", "room-lower"); // 50 dmg per round
     const session = newSession("room-lower");
     // Keep swinging until the ogre's counter lands — it hits for 50 against a
     // 30 HP player, so one landed blow is lethal, but it can miss.
@@ -245,27 +243,27 @@ describe("look — auto-respawn from defeated", () => {
   });
 });
 
-/* ── look — surfaces live monsters ────────────────────────────── */
+/* ── look — surfaces live hostiles ────────────────────────────── */
 
-describe("look — monster line", () => {
-  it("includes alive monsters with their current/max HP", async () => {
+describe("look — hostile line", () => {
+  it("includes alive hostiles with their current/max HP", async () => {
     const w = buildWorld();
-    w.spawnMonster("goblin", "room-lower");
+    w.spawnHostile("goblin", "room-lower");
     const session = newSession("room-lower");
     const lines = (await dispatch({
       world: w,
       session,
       command: parseCommand("look"),
     })).response.lines;
-    const monsterLine = lines.find((l) => l.startsWith("Monsters here"));
-    expect(monsterLine).toBeDefined();
-    expect(monsterLine).toContain("Goblin (8/8 HP)");
+    const hostileLine = lines.find((l) => l.startsWith("Monsters here"));
+    expect(hostileLine).toBeDefined();
+    expect(hostileLine).toContain("Goblin (8/8 HP)");
   });
 
-  it("hides the monster line after the room is cleared", async () => {
+  it("hides the hostile line after the room is cleared", async () => {
     const w = buildWorld();
-    const inst = w.spawnMonster("goblin", "room-lower");
-    w.damageMonster(inst.instanceId, 999);
+    const inst = w.spawnHostile("goblin", "room-lower");
+    w.damageHostile(inst.instanceId, 999);
     const session = newSession("room-lower");
     const lines = (await dispatch({
       world: w,
@@ -291,7 +289,7 @@ describe("look — monster line", () => {
 describe("levelling on a kill", () => {
   it("levels the character up when the award crosses a threshold", async () => {
     const world = buildWorld();
-    const goblin = world.spawnMonster("goblin", "room-lower");
+    const goblin = world.spawnHostile("goblin", "room-lower");
     const session = newSession("room-lower");
     // One goblin short of level 2.
     session.experience = xpForLevel(2) - goblin.experience;
@@ -308,7 +306,7 @@ describe("levelling on a kill", () => {
 
   it("raises current HP with max HP, so levelling is not a penalty", async () => {
     const world = buildWorld();
-    const goblin = world.spawnMonster("goblin", "room-lower");
+    const goblin = world.spawnHostile("goblin", "room-lower");
     const session = newSession("room-lower");
     session.experience = xpForLevel(2) - goblin.experience;
     session.currentHp = 400; // survives every counter-attack; HP checked below
@@ -323,7 +321,7 @@ describe("levelling on a kill", () => {
 
   it("says nothing about levelling on a kill that does not cross one", async () => {
     const world = buildWorld();
-    world.spawnMonster("goblin", "room-lower");
+    world.spawnHostile("goblin", "room-lower");
     const session = newSession("room-lower");
 
     const lines = await swingUntilDead(world, session);
@@ -339,7 +337,7 @@ describe("levelling on a kill", () => {
     const world = buildWorld();
     const session = newSession("room-lower");
     for (let i = 0; i < 8; i += 1) {
-      world.spawnMonster("goblin", "room-lower");
+      world.spawnHostile("goblin", "room-lower");
       session.currentHp = 10_000; // survive the grind; levelling is the subject
       await swingUntilDead(world, session);
       expect(session.level).toBe(levelForXp(session.experience));
@@ -353,7 +351,7 @@ describe("levelling on a kill", () => {
  * Combat is no longer deterministic in the number of swings — damage varies
  * and blows can miss — so tests about the CONSEQUENCE of a kill must not
  * assert how many attacks it took. Seeded so the sequence is reproducible;
- * bounded so a bug that makes a monster unkillable fails loudly instead of
+ * bounded so a bug that makes a hostile unkillable fails loudly instead of
  * hanging the suite.
  */
 async function swingUntilDead(

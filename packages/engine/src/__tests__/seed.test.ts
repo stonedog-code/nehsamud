@@ -8,15 +8,17 @@
  */
 
 import {
-  CLASSES,
+  CHARACTER_OPTION_GROUPS,
   EFFECTS,
   ITEMS,
   ITEM_PLACEMENTS,
-  MONSTERS,
+  HOSTILES,
   NPCS,
-  RACES,
   ROOMS,
 } from "../seed/fixtures/index.js";
+
+/** Every option across every declared group — what the seeder writes. */
+const ALL_OPTIONS = CHARACTER_OPTION_GROUPS.flatMap((g) => g.options);
 import { seedCatalog } from "../seed/seed.js";
 
 interface UpsertCall<TWhere = unknown, TCreate = unknown, TUpdate = unknown> {
@@ -32,13 +34,13 @@ interface UpdateCall<TWhere = unknown, TData = unknown> {
 
 function makeMockPrisma() {
   const calls = {
-    race: [] as UpsertCall[],
-    class: [] as UpsertCall[],
+    optionGroup: [] as UpsertCall[],
+    option: [] as UpsertCall[],
     room: [] as UpsertCall[],
     roomUpdates: [] as UpdateCall[],
     item: [] as UpsertCall[],
     roomItem: [] as Array<{ data: Record<string, unknown> }>,
-    monster: [] as UpsertCall[],
+    hostile: [] as UpsertCall[],
     npc: [] as UpsertCall[],
   };
   const roomIdByKey = new Map<string, string>();
@@ -51,23 +53,32 @@ function makeMockPrisma() {
       // Every findMany below returns exactly what the fixtures declare, so
       // the prune step finds nothing stale and these orchestration tests stay
       // about seeding. Pruning has its own suite with its own fake.
-      mudRace: {
+      mudCharacterOptionGroup: {
         upsert: jest.fn(async (call: UpsertCall) => {
-          calls.race.push(call);
+          calls.optionGroup.push(call);
+          const key = (call.where as { key: string }).key;
+          return { id: `group-${key}` };
         }),
         findMany: jest.fn(async () =>
-          RACES.map((r, i) => ({ id: `race-${i}`, slug: r.slug })),
+          CHARACTER_OPTION_GROUPS.map((g) => ({
+            id: `group-${g.key}`,
+            key: g.key,
+          })),
         ),
         delete: jest.fn(async () => undefined),
       },
-      mudClass: {
+      mudCharacterOption: {
         upsert: jest.fn(async (call: UpsertCall) => {
-          calls.class.push(call);
+          calls.option.push(call);
         }),
-        findMany: jest.fn(async () =>
-          CLASSES.map((c, i) => ({ id: `class-${i}`, slug: c.slug })),
-        ),
+        // Nothing stale: the prune asks for options OUTSIDE the declared
+        // slugs, and this fake says there are none.
+        findMany: jest.fn(async () => []),
+        findFirst: jest.fn(async () => null),
         delete: jest.fn(async () => undefined),
+      },
+      mudPlayerOption: {
+        findFirst: jest.fn(async () => null),
       },
       mudPlayer: {
         findFirst: jest.fn(async () => null),
@@ -114,12 +125,12 @@ function makeMockPrisma() {
         }),
         deleteMany: jest.fn(async () => ({ count: 0 })),
       },
-      mudMonster: {
+      mudHostile: {
         upsert: jest.fn(async (call: UpsertCall) => {
-          calls.monster.push(call);
+          calls.hostile.push(call);
         }),
         findMany: jest.fn(async () =>
-          MONSTERS.map((m, i) => ({ id: `monster-${i}`, slug: m.slug })),
+          HOSTILES.map((m, i) => ({ id: `hostile-${i}`, slug: m.slug })),
         ),
         deleteMany: jest.fn(async () => ({ count: 0 })),
       },
@@ -145,8 +156,8 @@ describe("seedCatalog — orchestration", () => {
     const result = await seedCatalog(prisma as unknown as Parameters<typeof seedCatalog>[0]);
 
     expect(result).toEqual({
-      races: RACES.length,
-      classes: CLASSES.length,
+      optionGroups: CHARACTER_OPTION_GROUPS.length,
+      options: ALL_OPTIONS.length,
       rooms: ROOMS.length,
       items: ITEMS.length,
       // Every placement lands in a fresh world; the fake reports each room as
@@ -154,7 +165,7 @@ describe("seedCatalog — orchestration", () => {
       // what stops the seed duplicating a sword or sweeping up something a
       // player dropped.
       placements: ITEM_PLACEMENTS.length,
-      monsters: MONSTERS.length,
+      hostiles: HOSTILES.length,
       npcs: NPCS.length,
       // Nothing stale in this fake, so the prune reports an empty removal in
       // every category. That IS the assertion: a seed against a database
@@ -163,18 +174,18 @@ describe("seedCatalog — orchestration", () => {
         rooms: [],
         npcs: [],
         items: [],
-        monsters: [],
-        races: [],
-        classes: [],
+        hostiles: [],
+        optionGroups: [],
+        options: [],
         playersRelocated: 0,
       },
     });
 
-    expect(calls.race).toHaveLength(RACES.length);
-    expect(calls.class).toHaveLength(CLASSES.length);
+    expect(calls.optionGroup).toHaveLength(CHARACTER_OPTION_GROUPS.length);
+    expect(calls.option).toHaveLength(ALL_OPTIONS.length);
     expect(calls.room).toHaveLength(ROOMS.length);
     expect(calls.item).toHaveLength(ITEMS.length);
-    expect(calls.monster).toHaveLength(MONSTERS.length);
+    expect(calls.hostile).toHaveLength(HOSTILES.length);
     expect(calls.npc).toHaveLength(NPCS.length);
   });
 

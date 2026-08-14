@@ -11,7 +11,7 @@
  * engine, so the e2e test asserting that refusal is meaningful from day one.
  */
 
-import type { CharacterClass, DerivedStats, Race } from "./catalog";
+import type { DerivedStats, SelectedOption } from "./catalog";
 import { MODES, type GameMode } from "./modes";
 
 export const DIRECTIONS = [
@@ -121,15 +121,22 @@ export interface Line {
  * Who the player chose to be.
  *
  * Held on the preview state so the choice is observable in-game. Until this
- * existed, the creation form collected a race and a class, previewed their
- * effect, and then nothing downstream ever mentioned them again — which is
+ * existed, the creation form collected the answers, previewed their effect,
+ * and then nothing downstream ever mentioned them again — which is
  * indistinguishable from the choice not being recorded at all.
+ *
+ * `selection` is one entry per axis the pack declares, in declared order, so
+ * the preview describes a character the same way the engine does.
  */
 export interface PreviewCharacter {
   readonly name: string;
-  readonly race: Race;
-  readonly characterClass: CharacterClass;
+  readonly selection: readonly SelectedOption[];
   readonly stats: DerivedStats;
+}
+
+/** "Elf Mage", or "" for a pack that declares no axes. */
+function describeSelection(character: PreviewCharacter): string {
+  return character.selection.map((s) => s.option.name).join(" ");
 }
 
 export interface PreviewState {
@@ -155,13 +162,14 @@ function describeRoom(room: PreviewRoom): Line[] {
 
 export function initialState(character: PreviewCharacter): PreviewState {
   const room = PREVIEW_ROOMS[START_ROOM];
+  const described = describeSelection(character);
   return {
     roomKey: START_ROOM,
     character,
     lines: [
       {
         kind: "system",
-        text: `Welcome, ${character.name} the ${character.race.name} ${character.characterClass.name}. Type "help" for a list of commands.`,
+        text: `Welcome, ${character.name}${described ? ` the ${described}` : ""}. Type "help" for a list of commands.`,
       },
       ...describeRoom(room),
     ],
@@ -170,12 +178,13 @@ export function initialState(character: PreviewCharacter): PreviewState {
 
 /** The character sheet, as the preview can render it. */
 function describeCharacter(character: PreviewCharacter): Line[] {
+  const described = describeSelection(character);
   return [
     { kind: "room", text: `${character.name} — level 1` },
-    {
-      kind: "text",
-      text: `${character.race.name} ${character.characterClass.name}`,
-    },
+    // Omitted entirely for a pack with no axes, matching the engine's
+    // `statistics`: a blank line where a description would go reads as
+    // something that failed to load.
+    ...(described ? [{ kind: "text" as const, text: described }] : []),
     {
       kind: "text",
       text: `Health: ${character.stats.hp} of ${character.stats.hp}`,
@@ -189,7 +198,7 @@ const HELP_TEXT = [
   "          southwest, up, down — or their short forms (n, s, e, w, ne,",
   "          nw, se, sw, u, d).",
   "look    — describe where you are.",
-  "stats   — your race, class and what they get you.",
+  "stats   — who you are and what it gets you.",
   "help    — show this list.",
 ].join("\n");
 

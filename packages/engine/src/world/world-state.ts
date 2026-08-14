@@ -2,7 +2,7 @@
  * In-memory world cache.
  *
  * Loaded once at boot from the mud.* catalog tables and held for
- * the lifetime of the process. Rooms, NPCs, items, monsters, etc.
+ * the lifetime of the process. Rooms, NPCs, items, hostiles, etc.
  * are catalog data (read-mostly during runtime), so caching them
  * keeps the command processor O(1) per lookup and avoids hammering
  * Postgres for descriptions on every `look`.
@@ -48,17 +48,19 @@ export interface CachedNpc {
   description: string;
   roomId: string | null;
   pronoun: string;
-  alignment: string;
+  /** Pack-defined labels. The engine reads none of them; the AI dialog
+   * prompt passes them through as flavour. */
+  tags: string[];
   intelligenceMode: "canned" | "ai";
   dialogLines: string[];
   interests: string[];
 }
 
 /**
- * Monster catalog row (read-only base stats). Spawned instances
- * are tracked separately as `MonsterInstance`.
+ * Hostile catalog row (read-only base stats). Spawned instances
+ * are tracked separately as `HostileInstance`.
  */
-export interface CachedMonster {
+export interface CachedHostile {
   id: string;
   slug: string;
   name: string;
@@ -67,19 +69,20 @@ export interface CachedMonster {
   baseHp: number;
   baseDamage: number;
   experience: number;
-  alignment: string;
-  mobType: string;
+  /** Pack-defined labels, e.g. ["undead", "evil"]. Read by no rule — they
+   * classify content for the pack's own benefit. */
+  tags: string[];
 }
 
 /**
- * A live monster in a specific room. Multiple instances of the
+ * A live hostile in a specific room. Multiple instances of the
  * same slug can coexist (e.g. two giant rats); each gets a unique
  * `instanceId` that the player can target with `attack <slug>`
  * (resolves to the first live instance of that slug in the room).
  */
-export interface MonsterInstance {
+export interface HostileInstance {
   instanceId: string;
-  monsterId: string;
+  hostileId: string;
   slug: string;
   name: string;
   roomId: string;
@@ -143,13 +146,13 @@ export class WorldState {
   private npcs = new Map<string, CachedNpc>();
   private npcsBySlug = new Map<string, CachedNpc>();
   private npcsByRoomId = new Map<string, CachedNpc[]>();
-  private monsters = new Map<string, CachedMonster>();
-  private monstersBySlug = new Map<string, CachedMonster>();
-  /** Live monster instances by their opaque instanceId. */
-  private monsterInstances = new Map<string, MonsterInstance>();
+  private hostiles = new Map<string, CachedHostile>();
+  private hostilesBySlug = new Map<string, CachedHostile>();
+  /** Live hostile instances by their opaque instanceId. */
+  private hostileInstances = new Map<string, HostileInstance>();
   /** Index of live instances per roomId for fast `look` rendering. */
-  private monstersByRoomId = new Map<string, MonsterInstance[]>();
-  private nextMonsterInstanceCounter = 0;
+  private hostilesByRoomId = new Map<string, HostileInstance[]>();
+  private nextHostileInstanceCounter = 0;
   private items = new Map<string, CachedItem>();
   /** Items lying on the floor, per room. Mutable: `get` and `drop` move
    * stacks between here and a player's inventory. */
@@ -200,7 +203,7 @@ export class WorldState {
         description: true,
         roomId: true,
         pronoun: true,
-        alignment: true,
+        tags: true,
         intelligenceMode: true,
         dialogLines: true,
         interests: true,
@@ -217,7 +220,7 @@ export class WorldState {
         description: n.description,
         roomId: n.roomId,
         pronoun: n.pronoun,
-        alignment: n.alignment,
+        tags: n.tags,
         intelligenceMode: n.intelligenceMode === "ai" ? "ai" : "canned",
         dialogLines: n.dialogLines,
         interests: n.interests,
@@ -231,7 +234,7 @@ export class WorldState {
       }
     }
 
-    const monsterRows = await prisma.mudMonster.findMany({
+    const hostileRows = await prisma.mudHostile.findMany({
       select: {
         id: true,
         slug: true,
@@ -241,14 +244,13 @@ export class WorldState {
         baseHp: true,
         baseDamage: true,
         experience: true,
-        alignment: true,
-        mobType: true,
+        tags: true,
       },
     });
-    this.monsters.clear();
-    this.monstersBySlug.clear();
-    for (const m of monsterRows) {
-      const cached: CachedMonster = {
+    this.hostiles.clear();
+    this.hostilesBySlug.clear();
+    for (const m of hostileRows) {
+      const cached: CachedHostile = {
         id: m.id,
         slug: m.slug,
         name: m.name,
@@ -257,18 +259,17 @@ export class WorldState {
         baseHp: m.baseHp,
         baseDamage: m.baseDamage,
         experience: m.experience,
-        alignment: m.alignment,
-        mobType: m.mobType,
+        tags: m.tags,
       };
-      this.monsters.set(m.id, cached);
-      this.monstersBySlug.set(m.slug, cached);
+      this.hostiles.set(m.id, cached);
+      this.hostilesBySlug.set(m.slug, cached);
     }
-    // Live monster instances clear on every world reload — they're
+    // Live hostile instances clear on every world reload — they're
     // memory-only, not persisted, so a process restart re-spawns
     // from the spawn fixtures (which the caller wires after load).
-    this.monsterInstances.clear();
-    this.monstersByRoomId.clear();
-    this.nextMonsterInstanceCounter = 0;
+    this.hostileInstances.clear();
+    this.hostilesByRoomId.clear();
+    this.nextHostileInstanceCounter = 0;
 
     const itemRows = await prisma.mudItem.findMany({
       select: {
@@ -283,7 +284,7 @@ export class WorldState {
     this.items.clear();
     for (const i of itemRows) this.items.set(i.id, i);
 
-    // Room contents DO persist, unlike monster spawns — an item a player
+    // Room contents DO persist, unlike hostile spawns — an item a player
     // dropped last week is still on that floor. So they are loaded rather
     // than regenerated, and written back when they move.
     const roomItemRows = await prisma.mudRoomItem.findMany({
@@ -304,7 +305,7 @@ export class WorldState {
   hydrate(
     rooms: CachedRoom[],
     npcs: CachedNpc[] = [],
-    monsters: CachedMonster[] = [],
+    hostiles: CachedHostile[] = [],
     items: CachedItem[] = [],
     roomItems: Array<{
       roomId: string;
@@ -318,11 +319,11 @@ export class WorldState {
     this.npcs.clear();
     this.npcsBySlug.clear();
     this.npcsByRoomId.clear();
-    this.monsters.clear();
-    this.monstersBySlug.clear();
-    this.monsterInstances.clear();
-    this.monstersByRoomId.clear();
-    this.nextMonsterInstanceCounter = 0;
+    this.hostiles.clear();
+    this.hostilesBySlug.clear();
+    this.hostileInstances.clear();
+    this.hostilesByRoomId.clear();
+    this.nextHostileInstanceCounter = 0;
     this.items.clear();
     this.roomItems.clear();
     for (const i of items) this.items.set(i.id, i);
@@ -341,9 +342,9 @@ export class WorldState {
         this.npcsByRoomId.set(n.roomId, list);
       }
     }
-    for (const m of monsters) {
-      this.monsters.set(m.id, m);
-      this.monstersBySlug.set(m.slug, m);
+    for (const m of hostiles) {
+      this.hostiles.set(m.id, m);
+      this.hostilesBySlug.set(m.slug, m);
     }
   }
 
@@ -390,7 +391,7 @@ export class WorldState {
   /* ─── Items ────────────────────────────────────────────────────
    *
    * Room contents are IN-MEMORY and authoritative for the running world, the
-   * same as monster instances. The database is where they are loaded from and
+   * same as hostile instances. The database is where they are loaded from and
    * written back to; it is not consulted per command, because two players in
    * one room racing for one item must be resolved by a single owner and that
    * owner is this process.
@@ -535,47 +536,47 @@ export class WorldState {
     return before;
   }
 
-  /* ─── Monster catalog + instance management ───────────────── */
+  /* ─── Hostile catalog + instance management ───────────────── */
 
-  getMonsterBySlug(slug: string): CachedMonster | undefined {
-    return this.monstersBySlug.get(slug);
+  getHostileBySlug(slug: string): CachedHostile | undefined {
+    return this.hostilesBySlug.get(slug);
   }
 
-  monsterCatalogCount(): number {
-    return this.monsters.size;
+  hostileCatalogCount(): number {
+    return this.hostiles.size;
   }
 
   /**
-   * Spawn a fresh instance of the given monster into the given
+   * Spawn a fresh instance of the given hostile into the given
    * room. Returns the new instance so callers can log it or hand
    * it to combat. Throws when the slug or room is unknown — the
    * caller passed bad fixture data.
    *
-   * Also throws in a world whose mode has no monsters. This is one of the
+   * Also throws in a world whose mode has no hostiles. This is one of the
    * two independent guards behind the Exploration build's promise: callers
-   * are expected to check `capabilities.monsters` and skip, but a new call
-   * site that forgets must fail loudly rather than quietly put a monster in
+   * are expected to check `capabilities.hostiles` and skip, but a new call
+   * site that forgets must fail loudly rather than quietly put a hostile in
    * front of someone who was told there were none.
    */
-  spawnMonster(monsterSlug: string, roomId: string): MonsterInstance {
-    if (!this.capabilities.monsters) {
+  spawnHostile(hostileSlug: string, roomId: string): HostileInstance {
+    if (!this.capabilities.hostiles) {
       throw new Error(
-        `spawnMonster: refused — this world runs in "${this.mode}" mode, ` +
-          "which has no monsters",
+        `spawnHostile: refused — this world runs in "${this.mode}" mode, ` +
+          "which has no hostiles",
       );
     }
-    const catalog = this.monstersBySlug.get(monsterSlug);
+    const catalog = this.hostilesBySlug.get(hostileSlug);
     if (!catalog) {
-      throw new Error(`spawnMonster: unknown monster slug "${monsterSlug}"`);
+      throw new Error(`spawnHostile: unknown hostile slug "${hostileSlug}"`);
     }
     if (!this.rooms.has(roomId)) {
-      throw new Error(`spawnMonster: unknown roomId "${roomId}"`);
+      throw new Error(`spawnHostile: unknown roomId "${roomId}"`);
     }
-    this.nextMonsterInstanceCounter += 1;
-    const instanceId = `${monsterSlug}-${this.nextMonsterInstanceCounter}`;
-    const instance: MonsterInstance = {
+    this.nextHostileInstanceCounter += 1;
+    const instanceId = `${hostileSlug}-${this.nextHostileInstanceCounter}`;
+    const instance: HostileInstance = {
       instanceId,
-      monsterId: catalog.id,
+      hostileId: catalog.id,
       slug: catalog.slug,
       name: catalog.name,
       roomId,
@@ -584,24 +585,24 @@ export class WorldState {
       baseDamage: catalog.baseDamage,
       experience: catalog.experience,
     };
-    this.monsterInstances.set(instanceId, instance);
-    const list = this.monstersByRoomId.get(roomId) ?? [];
+    this.hostileInstances.set(instanceId, instance);
+    const list = this.hostilesByRoomId.get(roomId) ?? [];
     list.push(instance);
-    this.monstersByRoomId.set(roomId, list);
+    this.hostilesByRoomId.set(roomId, list);
     return instance;
   }
 
-  getMonstersInRoom(roomId: string): MonsterInstance[] {
-    return this.monstersByRoomId.get(roomId) ?? [];
+  getHostilesInRoom(roomId: string): HostileInstance[] {
+    return this.hostilesByRoomId.get(roomId) ?? [];
   }
 
   /** First live instance of the slug in the room, or by instanceId
    * match. Returns undefined when the player typed a slug that
    * isn't present. */
-  findMonsterInRoom(query: string, roomId: string): MonsterInstance | undefined {
+  findHostileInRoom(query: string, roomId: string): HostileInstance | undefined {
     const needle = query.trim().toLowerCase();
     if (!needle) return undefined;
-    const inRoom = this.getMonstersInRoom(roomId);
+    const inRoom = this.getHostilesInRoom(roomId);
     return inRoom.find(
       (m) =>
         m.instanceId.toLowerCase() === needle ||
@@ -611,32 +612,32 @@ export class WorldState {
     );
   }
 
-  /** Remove a defeated monster instance from the world. */
-  despawnMonster(instanceId: string): void {
-    const instance = this.monsterInstances.get(instanceId);
+  /** Remove a defeated hostile instance from the world. */
+  despawnHostile(instanceId: string): void {
+    const instance = this.hostileInstances.get(instanceId);
     if (!instance) return;
-    this.monsterInstances.delete(instanceId);
-    const list = this.monstersByRoomId.get(instance.roomId);
+    this.hostileInstances.delete(instanceId);
+    const list = this.hostilesByRoomId.get(instance.roomId);
     if (list) {
       const filtered = list.filter((m) => m.instanceId !== instanceId);
-      if (filtered.length === 0) this.monstersByRoomId.delete(instance.roomId);
-      else this.monstersByRoomId.set(instance.roomId, filtered);
+      if (filtered.length === 0) this.hostilesByRoomId.delete(instance.roomId);
+      else this.hostilesByRoomId.set(instance.roomId, filtered);
     }
   }
 
-  /** Apply damage to a monster instance. Returns the surviving
+  /** Apply damage to a hostile instance. Returns the surviving
    * HP, or 0 if the instance was killed (and despawned). */
-  damageMonster(instanceId: string, damage: number): number {
-    const instance = this.monsterInstances.get(instanceId);
+  damageHostile(instanceId: string, damage: number): number {
+    const instance = this.hostileInstances.get(instanceId);
     if (!instance) return 0;
     instance.currentHp = Math.max(0, instance.currentHp - damage);
     if (instance.currentHp === 0) {
-      this.despawnMonster(instanceId);
+      this.despawnHostile(instanceId);
     }
     return instance.currentHp;
   }
 
-  liveMonsterCount(): number {
-    return this.monsterInstances.size;
+  liveHostileCount(): number {
+    return this.hostileInstances.size;
   }
 }

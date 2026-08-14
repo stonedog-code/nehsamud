@@ -31,9 +31,9 @@ export const MAX_LEVEL = 100;
  * is a real world to measure against.
  *
  * With the current numbers: level 2 at 100 XP, level 10 at ~24k, level 100
- * at ~9.75M. Against the ~20 XP a seeded monster is worth today that is far
+ * at ~9.75M. Against the ~20 XP a seeded hostile is worth today that is far
  * too slow at the top end — which is expected, because XP per kill is meant
- * to scale with monster difficulty in the areas that do not exist yet
+ * to scale with hostile difficulty in the areas that do not exist yet
  * (NEH-626). Do not "fix" the curve by flattening it before those areas
  * land; the two are one balance problem.
  */

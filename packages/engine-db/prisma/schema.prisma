@@ -1,13 +1,32 @@
-// Prisma schema for the hopper-mud Postgres tables. All tables live
-// in the `mud` Postgres schema (set via `previewFeatures = ["multiSchema"]`
-// + the `@@schema("mud")` annotation on each model). MudPlayer carries
-// a FK to public.user.user_id so a Hopper user can own one or more
-// MUD characters.
+// Prisma schema for the NehsaMUD Postgres tables. All tables live in
+// the `mud` Postgres schema (the `@@schema("mud")` annotation on each
+// model; multi-schema is built in since Prisma 7).
 //
-// Versioning: the Python backend is the primary writer for character
-// state (position, hp, inventory contents). Lookup tables — Race,
-// Class, Item, Monster, Room — are seeded from migrations and treated
-// as read-mostly catalog by the Python code.
+// THE VOCABULARY HERE IS DELIBERATELY GENRE-FREE. One engine serves
+// worlds that share nothing thematically — a fantasy MUD and a virtual
+// senior-care centre — and a column called `race` or a table called
+// `monster` is a fantasy assumption compiled into every deployment.
+// So the schema names MECHANICS and content packs supply NOUNS:
+//
+//   a thing that can be fought       → `hostile`, not `monster`
+//   an axis a character is built on  → `character_option_group`,
+//                                      not `race` and `class`
+//   what kind of thing something is  → `tags`, not `alignment`/`mob_type`
+//   who owns a character             → an opaque `owner_id`, not an FK
+//                                      into some host's user table
+//
+// A pack declares its own axes: the fantasy pack ships Race and Class,
+// a care centre may ship Background and Room, and a minimal pack may
+// ship none at all. See docs/prd/PRD-0002-content-packs.md (R6–R9).
+//
+// `schema-vocabulary.test.ts` enforces the rule on this file, because
+// "no genre words" is the kind of thing review agrees with and then
+// misses. Doc comments are exempt — this one has to be able to say
+// "race" to explain why there isn't one.
+//
+// Catalog tables (Room, Item, Hostile, Npc, the option groups) are
+// seeded from a pack and treated as read-mostly. Character state
+// (position, hp, inventory) is written by the engine at runtime.
 
 generator client {
   // multiSchema is built in to Prisma 7+; the preview-features flag
@@ -32,34 +51,30 @@ datasource db {
   schemas  = ["mud", "public"]
 }
 
-/// A Hopper user's MUD character. One Hopper user can have multiple
-/// characters (the Login modal supports a single character today, but
-/// the model accommodates future expansion). Position is tracked via
-/// roomId; null means the character isn't currently spawned.
+/// One player character. A single owner can hold several (the login
+/// flows offer one today, but nothing here assumes that). Position is
+/// tracked via roomId; null means the character isn't currently spawned.
 model MudPlayer {
   id          String   @id @default(uuid()) @db.Uuid
   /// The account that owns this character, as an OPAQUE id.
   ///
-  /// Deliberately not a foreign key any more. It referenced
-  /// `public.user(user_id)`, a table this package does not own — which
-  /// blocked a standalone deployment twice over: its database could not be
-  /// migrated, and its characters could not be created. The host decides what
-  /// this id means; the engine does not care.
-  userId      String   @map("user_id") @db.Uuid
+  /// Deliberately not a foreign key. It referenced `public.user(user_id)`,
+  /// a table this package does not own — which blocked a standalone
+  /// deployment twice over: its database could not be migrated, and its
+  /// characters could not be created. The host decides what this id means;
+  /// the engine never interprets it.
+  ownerId     String   @map("owner_id") @db.Uuid
   name        String   @unique @db.VarChar(50)
-  raceId      String   @map("race_id") @db.Uuid
-  classId     String   @map("class_id") @db.Uuid
   /// Current room. Null when the character hasn't spawned yet or is
-  /// in a transient state. The Python world service updates this on
-  /// every `move` event.
+  /// in a transient state. Updated on every `move`.
   roomId      String?  @map("room_id") @db.Uuid
   level       Int      @default(1)
   experience  Int      @default(0)
   currentHp   Int      @default(10) @map("current_hp")
   maxHp       Int      @default(10) @map("max_hp")
-  /// Stats — the six core attributes the upstream MUD tracks. Default
-  /// values come from the Race + Class modifiers applied at creation
-  /// time; the columns store the post-modifier values for fast reads.
+  /// Stats — the seven core attributes. Values come from the chosen
+  /// options' modifiers applied at creation time; the columns store the
+  /// post-modifier values for fast reads.
   strength     Int @default(10)
   intelligence Int @default(10)
   wisdom       Int @default(10)
@@ -67,9 +82,8 @@ model MudPlayer {
   constitution Int @default(10)
   dexterity    Int @default(10)
   luck         Int @default(10)
-  /// Optional cosmetic appearance fields. The upstream NewUserRequest
-  /// sends these; we keep them as nullable strings so PR-3c's trimmed
-  /// creation flow (no appearance pickers) works today.
+  /// Optional cosmetic appearance fields. Nullable throughout — the
+  /// creation flows in use today ship no appearance pickers.
   bodyType        String?  @map("body_type") @db.VarChar(50)
   sex             String?  @db.VarChar(50)
   eyeColor        String?  @map("eye_color") @db.VarChar(50)
@@ -86,69 +100,111 @@ model MudPlayer {
   /// queries and stale-character cleanup. Null until first login.
   lastSeenAt DateTime? @map("last_seen_at")
 
-  race      MudRace        @relation(fields: [raceId], references: [id])
-  class     MudClass       @relation(fields: [classId], references: [id])
-  room      MudRoom?       @relation(fields: [roomId], references: [id])
+  room      MudRoom?          @relation(fields: [roomId], references: [id])
   inventory MudInventory[]
+  /// What this character was built from — one row per option group the
+  /// pack declares. Empty for a pack with no character-creation axes,
+  /// which is a legitimate world rather than a broken character.
+  options   MudPlayerOption[]
 
-  @@index([userId])
+  @@index([ownerId])
   @@map("player")
   @@schema("mud")
 }
 
-/// Playable race catalog. Seeded from migration; the Python backend
-/// reads it via SELECT on connection. Maps to the upstream's
-/// React/Races/* folder + the /v1/mud/races endpoint.
-model MudRace {
-  id                       String      @id @default(uuid()) @db.Uuid
-  /// Lowercase slug — the wire value the client/server compare on.
-  slug                     String      @unique @db.VarChar(50)
-  name                     String      @unique @db.VarChar(50)
-  description              String
-  abilities                String[]
-  directives               String[]
-  /// Stat modifiers applied at character creation.
-  strengthMod              Int         @default(0) @map("strength_mod")
-  intelligenceMod          Int         @default(0) @map("intelligence_mod")
-  wisdomMod                Int         @default(0) @map("wisdom_mod")
-  charismaMod              Int         @default(0) @map("charisma_mod")
-  constitutionMod          Int         @default(0) @map("constitution_mod")
-  dexterityMod             Int         @default(0) @map("dexterity_mod")
-  luckMod                  Int         @default(0) @map("luck_mod")
-  baseExperienceAdjustment Int         @default(0) @map("base_experience_adjustment")
-  playable                 Boolean     @default(true)
-  createdAt                DateTime    @default(now()) @map("created_at")
-  updatedAt                DateTime    @updatedAt @map("updated_at")
+/// An axis a character is built on, declared by the content pack.
+///
+/// The fantasy pack declares two — Race and Class. A care-centre pack may
+/// declare Background and Room, or none at all. The engine knows only that
+/// a character picks one option per group; what the groups MEAN is content.
+///
+/// This replaced two hardcoded tables, `race` and `class`, which forced
+/// every world to have exactly those two axes and no others.
+model MudCharacterOptionGroup {
+  id          String   @id @default(uuid()) @db.Uuid
+  /// Stable key the pack and the wire protocol use, e.g. "race".
+  /// Lowercase; the application-layer reference for this group.
+  key         String   @unique @db.VarChar(50)
+  /// What a player is shown, e.g. "Race".
+  name        String   @unique @db.VarChar(50)
+  description String
+  /// Order the creation flow asks in. Ties broken by `key`, so the
+  /// order is total and a player is asked the same questions in the
+  /// same sequence every time.
+  position    Int      @default(0)
+  /// Whether a character MUST pick from this group. A pack can declare
+  /// an optional axis; creation then succeeds without it.
+  required    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
-  players MudPlayer[]
+  options       MudCharacterOption[]
+  playerOptions MudPlayerOption[]
 
-  @@map("race")
+  @@map("character_option_group")
   @@schema("mud")
 }
 
-/// Playable class catalog. Same shape as MudRace.
-model MudClass {
-  id                       String      @id @default(uuid()) @db.Uuid
-  slug                     String      @unique @db.VarChar(50)
-  name                     String      @unique @db.VarChar(50)
+/// One choice within a group — "Elf" within Race, "Night nurse" within Staff.
+///
+/// Carries the attribute modifiers applied at creation. Every option in
+/// every group contributes, so a pack with three axes stacks three sets of
+/// modifiers and a pack with none produces a character of straight base
+/// attributes.
+model MudCharacterOption {
+  id                       String   @id @default(uuid()) @db.Uuid
+  groupId                  String   @map("group_id") @db.Uuid
+  /// Lowercase slug — the wire value the client and server compare on.
+  /// Unique within its group, not globally: two packs' groups may both
+  /// reasonably offer "standard".
+  slug                     String   @db.VarChar(50)
+  name                     String   @db.VarChar(50)
   description              String
   abilities                String[]
   directives               String[]
-  strengthMod              Int         @default(0) @map("strength_mod")
-  intelligenceMod          Int         @default(0) @map("intelligence_mod")
-  wisdomMod                Int         @default(0) @map("wisdom_mod")
-  charismaMod              Int         @default(0) @map("charisma_mod")
-  constitutionMod          Int         @default(0) @map("constitution_mod")
-  dexterityMod             Int         @default(0) @map("dexterity_mod")
-  luckMod                  Int         @default(0) @map("luck_mod")
-  baseExperienceAdjustment Int         @default(0) @map("base_experience_adjustment")
-  playable                 Boolean     @default(true)
-  createdAt                DateTime    @default(now()) @map("created_at")
-  updatedAt                DateTime    @updatedAt @map("updated_at")
+  /// Attribute modifiers applied at character creation.
+  strengthMod              Int      @default(0) @map("strength_mod")
+  intelligenceMod          Int      @default(0) @map("intelligence_mod")
+  wisdomMod                Int      @default(0) @map("wisdom_mod")
+  charismaMod              Int      @default(0) @map("charisma_mod")
+  constitutionMod          Int      @default(0) @map("constitution_mod")
+  dexterityMod             Int      @default(0) @map("dexterity_mod")
+  luckMod                  Int      @default(0) @map("luck_mod")
+  baseExperienceAdjustment Int      @default(0) @map("base_experience_adjustment")
+  /// Whether a player may choose this. False for an option that exists
+  /// only as flavour or is retired but still referenced by characters.
+  selectable               Boolean  @default(true)
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
 
-  players MudPlayer[]
+  group         MudCharacterOptionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  playerOptions MudPlayerOption[]
 
-  @@map("class")
+  @@unique([groupId, slug])
+  @@unique([groupId, name])
+  @@index([groupId])
+  @@map("character_option")
+  @@schema("mud")
+}
+
+/// What one character picked on one axis.
+///
+/// The primary key is (player, group) rather than (player, option): that is
+/// what makes "one choice per axis" a database rule instead of a convention
+/// the create path is trusted to keep. A second insert for the same group
+/// is a constraint violation, not a character with two races.
+model MudPlayerOption {
+  playerId String @map("player_id") @db.Uuid
+  groupId  String @map("group_id") @db.Uuid
+  optionId String @map("option_id") @db.Uuid
+
+  player MudPlayer               @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  group  MudCharacterOptionGroup @relation(fields: [groupId], references: [id])
+  option MudCharacterOption      @relation(fields: [optionId], references: [id])
+
+  @@id([playerId, groupId])
+  @@index([optionId])
+  @@map("player_option")
   @@schema("mud")
 }
 
@@ -261,45 +317,48 @@ model MudRoomItem {
   @@schema("mud")
 }
 
-/// Monster catalog. Spawned by the Python world's mob-spawner; each
-/// fight references this row for base stats. Per-fight state (current
-/// hp, room location) lives in transient Python-side structures, not
-/// here — monsters respawn from the catalog so we don't store
-/// fight-instance rows.
-model MudMonster {
-  id           String   @id @default(uuid()) @db.Uuid
-  slug         String   @unique @db.VarChar(50)
-  name         String   @db.VarChar(255)
-  description  String
+/// Something that can be fought.
+///
+/// Called `monster` until PRD-0002 R6: the mechanic is "a thing that can
+/// be fought", and what that thing IS belongs to the pack. A care-centre
+/// world runs Exploration mode and simply leaves this table empty.
+///
+/// Spawned by the world bootstrap; each fight references this row for base
+/// stats. Per-fight state (current hp, room) lives in memory rather than
+/// here, so instances respawn from the catalog and there are no
+/// fight-instance rows to clean up.
+model MudHostile {
+  id          String   @id @default(uuid()) @db.Uuid
+  slug        String   @unique @db.VarChar(50)
+  name        String   @db.VarChar(255)
+  description String
   /// Tier / difficulty for spawn selection.
-  level        Int      @default(1)
-  baseHp       Int      @map("base_hp")
-  baseDamage   Int      @map("base_damage")
-  experience   Int      @default(0)
-  /// Behavior axis: "lawful_good" | "good" | "neutral" | "evil".
-  /// Denormalized from the Python `alignments` lookup table; that
-  /// table only ever held four rows that mapped to attack logic, so
-  /// a string column is simpler than a join.
-  alignment    String   @default("neutral") @db.VarChar(20)
-  /// Coarse type axis: "humanoid" | "beast" | "undead" | "elemental"
-  /// | etc. Originally a `mob_types` table, collapsed for the same
-  /// reason as alignment.
-  mobType      String   @default("humanoid") @map("mob_type") @db.VarChar(20)
-  /// AI-generated monster art filename when present.
-  imageName    String?  @map("image_name") @db.VarChar(255)
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  level       Int      @default(1)
+  baseHp      Int      @map("base_hp")
+  baseDamage  Int      @map("base_damage")
+  experience  Int      @default(0)
+  /// Pack-defined labels, e.g. ["undead", "evil"].
+  ///
+  /// Replaced two columns, `alignment` and `mob_type`, whose four and five
+  /// permitted values were a fantasy bestiary's taxonomy hardcoded into
+  /// every world. A tag list lets a pack classify its own content without
+  /// the engine having an opinion about what the categories are — and the
+  /// engine reads none of them today, which is the point: they are content.
+  tags        String[]
+  /// Generated art filename when present.
+  imageName   String?  @map("image_name") @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
-  @@map("monster")
+  @@map("hostile")
   @@schema("mud")
 }
 
-/// NPC catalog. NPCs are non-hostile mobs that occupy a fixed room
-/// and can be `talked` to; the Phase 5 NPC-dialog system will read
-/// `intelligenceMode` to decide whether to canned-reply or send the
-/// prompt to the text-generation provider. Distinct from MudMonster
-/// because the behavior axis is "dialog + economy" rather than
-/// "combat".
+/// Someone a player can talk to. Occupies a fixed room; the dialog
+/// system reads `intelligenceMode` to decide whether to canned-reply or
+/// send the prompt to the text-generation provider. Distinct from
+/// MudHostile because the behaviour axis is "dialog + economy" rather
+/// than "combat" — a world may have these and no hostiles at all.
 model MudNpc {
   id                String   @id @default(uuid()) @db.Uuid
   slug              String   @unique @db.VarChar(50)
@@ -311,9 +370,9 @@ model MudNpc {
   roomId            String?  @map("room_id") @db.Uuid
   /// "he" | "she" | "they" — referenced by canned-reply templating.
   pronoun           String   @default("they") @db.VarChar(10)
-  /// Same axis as MudMonster.alignment; influences canned reactions
-  /// to player aggression.
-  alignment         String   @default("neutral") @db.VarChar(20)
+  /// Pack-defined labels, same as MudHostile.tags. Was an `alignment`
+  /// column restricted to a fantasy morality scale.
+  tags              String[]
   /// "canned" | "ai" — canned uses the static `dialogLines` array;
   /// ai routes through the text-generation provider (Phase 6) and
   /// falls back to canned when the provider is unavailable per

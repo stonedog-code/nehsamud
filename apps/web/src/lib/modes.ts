@@ -45,6 +45,13 @@ export interface ModeDefinition {
 }
 
 /** Player-facing copy per mode. Capabilities come from the engine. */
+/*
+ * The copy still says "monsters" while the engine says "hostiles", and that
+ * is deliberate. `capabilities.hostiles` is the mechanic — a name one engine
+ * can use for a fantasy world and a care centre alike. What a PLAYER of THIS
+ * site reads is this pack's own vocabulary, and this site is the fantasy
+ * one. PRD-0002 R10 moves these strings into the pack proper.
+ */
 const PRESENTATION: Readonly<
   Record<GameMode, Omit<ModeDefinition, "id" | "capabilities">>
 > = {

@@ -1,8 +1,8 @@
 /**
- * Monster-spawn map. Pairs a room with one of the monsters in the
- * monster catalog. The Phase 5 world bootstrap rolls one live
+ * Hostile-spawn map. Pairs a room with one of the hostiles in the
+ * hostile catalog. The Phase 5 world bootstrap rolls one live
  * instance per spawn entry when the server boots — players who
- * walk into the room see the monster in `look` output and can
+ * walk into the room see the hostile in `look` output and can
  * `attack <slug>`.
  *
  * NOT persisted to the DB. The Python codebase stored spawn rules
@@ -11,26 +11,26 @@
  * declares.
  *
  * Re-spawning after a kill is deferred to a later phase — Phase 5
- * leaves a room emptied of its monster after combat ends.
+ * leaves a room emptied of its hostile after combat ends.
  */
 
-export interface MonsterSpawnFixture {
-  /** roomEnumKey the monster spawns in. */
+export interface HostileSpawnFixture {
+  /** roomEnumKey the hostile spawns in. */
   roomEnumKey: string;
-  /** monster.slug from the monster catalog. */
-  monsterSlug: string;
+  /** hostile.slug from the hostile catalog. */
+  hostileSlug: string;
 }
 
-export const MONSTER_SPAWNS: MonsterSpawnFixture[] = [
+export const HOSTILE_SPAWNS: HostileSpawnFixture[] = [
   // Lower quarter has a goblin lurking; the demo flow walks here
   // from the square via the sunroad → talentroad → ... sequence.
   // Keep the spawn list small enough that the demo doesn't get
   // overwhelmed.
-  { roomEnumKey: "TOWNSMEE_LOWER_QUARTER", monsterSlug: "goblin" },
-  { roomEnumKey: "TOWNSMEE_LOWER_QUARTER", monsterSlug: "giant-rat" },
-  { roomEnumKey: "TOWNSMEE_MINDROAD_BRIDGE", monsterSlug: "wolf" },
-  { roomEnumKey: "TOWNSMEE_TALENTROAD", monsterSlug: "bandit" },
-  { roomEnumKey: "TOWNSMEE_GALLOWS", monsterSlug: "skeleton" },
+  { roomEnumKey: "TOWNSMEE_LOWER_QUARTER", hostileSlug: "goblin" },
+  { roomEnumKey: "TOWNSMEE_LOWER_QUARTER", hostileSlug: "giant-rat" },
+  { roomEnumKey: "TOWNSMEE_MINDROAD_BRIDGE", hostileSlug: "wolf" },
+  { roomEnumKey: "TOWNSMEE_TALENTROAD", hostileSlug: "bandit" },
+  { roomEnumKey: "TOWNSMEE_GALLOWS", hostileSlug: "skeleton" },
 
   /* ── The Kingsreach Wilds (ring 1, levels 2–5) ─────────────
    *
@@ -40,41 +40,41 @@ export const MONSTER_SPAWNS: MonsterSpawnFixture[] = [
    * content that describes a threat and then does not have one is the same
    * lie as a stat preview that disagrees with the server.
    */
-  { roomEnumKey: "WILDS_HEATH_WEST", monsterSlug: "wolf" },
-  { roomEnumKey: "WILDS_HEATH_CENTRE", monsterSlug: "bandit" },
-  { roomEnumKey: "WILDS_HEATH_EAST", monsterSlug: "wolf" },
-  { roomEnumKey: "WILDS_CAIRN", monsterSlug: "wolf" },
-  { roomEnumKey: "WILDS_CAIRN", monsterSlug: "wolf" },
-  { roomEnumKey: "WILDS_OAKS_CENTRE", monsterSlug: "bandit" },
-  { roomEnumKey: "WILDS_OAKS_EAST", monsterSlug: "skeleton" },
-  { roomEnumKey: "WILDS_BARROW_MOUTH", monsterSlug: "skeleton" },
+  { roomEnumKey: "WILDS_HEATH_WEST", hostileSlug: "wolf" },
+  { roomEnumKey: "WILDS_HEATH_CENTRE", hostileSlug: "bandit" },
+  { roomEnumKey: "WILDS_HEATH_EAST", hostileSlug: "wolf" },
+  { roomEnumKey: "WILDS_CAIRN", hostileSlug: "wolf" },
+  { roomEnumKey: "WILDS_CAIRN", hostileSlug: "wolf" },
+  { roomEnumKey: "WILDS_OAKS_CENTRE", hostileSlug: "bandit" },
+  { roomEnumKey: "WILDS_OAKS_EAST", hostileSlug: "skeleton" },
+  { roomEnumKey: "WILDS_BARROW_MOUTH", hostileSlug: "skeleton" },
 
   /* ── Barrowdeep, upper (ring 2, levels 3–6) ────────────────
    *
    * Undead, with an ogre in the antechamber so the band's upper half is
    * something a player actually meets rather than a number in a fixture.
    */
-  { roomEnumKey: "BARROW_ENTRY_HALL", monsterSlug: "skeleton" },
-  { roomEnumKey: "BARROW_PILLARED_WAY", monsterSlug: "zombie" },
-  { roomEnumKey: "BARROW_ANTECHAMBER", monsterSlug: "ogre" },
-  { roomEnumKey: "BARROW_OSSUARY", monsterSlug: "zombie" },
-  { roomEnumKey: "BARROW_OSSUARY", monsterSlug: "skeleton" },
+  { roomEnumKey: "BARROW_ENTRY_HALL", hostileSlug: "skeleton" },
+  { roomEnumKey: "BARROW_PILLARED_WAY", hostileSlug: "zombie" },
+  { roomEnumKey: "BARROW_ANTECHAMBER", hostileSlug: "ogre" },
+  { roomEnumKey: "BARROW_OSSUARY", hostileSlug: "zombie" },
+  { roomEnumKey: "BARROW_OSSUARY", hostileSlug: "skeleton" },
 
   /* ── Barrowdeep, deep (ring 3, levels 5–8) ─────────────────
    *
    * What the barrow was built over. The vault holds the fire elemental the
    * warm plinth is warm from.
    */
-  { roomEnumKey: "BARROW_LOWER_LANDING", monsterSlug: "ogre" },
-  { roomEnumKey: "BARROW_FLOODED_GALLERY", monsterSlug: "ogre" },
-  { roomEnumKey: "BARROW_CARVED_CELL", monsterSlug: "ogre" },
-  { roomEnumKey: "BARROW_INNER_VAULT", monsterSlug: "fire-elemental" },
+  { roomEnumKey: "BARROW_LOWER_LANDING", hostileSlug: "ogre" },
+  { roomEnumKey: "BARROW_FLOODED_GALLERY", hostileSlug: "ogre" },
+  { roomEnumKey: "BARROW_CARVED_CELL", hostileSlug: "ogre" },
+  { roomEnumKey: "BARROW_INNER_VAULT", hostileSlug: "fire-elemental" },
 ];
 
 /**
  * Item placements — what is lying on the floor in a fresh world.
  *
- * Unlike monster spawns these ARE persisted, into `mud.room_item`, because
+ * Unlike hostile spawns these ARE persisted, into `mud.room_item`, because
  * room contents outlive a process: an item a player dropped last week is
  * still there. The seed is idempotent, so it places these only when the room
  * is empty — re-running it must not quietly duplicate a sword, and must not

@@ -38,12 +38,12 @@ function buildWorld(): WorldState {
     description: "Innkeeper.",
     roomId: "room-inn",
     pronoun: "she",
-    alignment: "good",
+    tags: ["good"],
     intelligenceMode: "canned",
     dialogLines: ["A room for the night?", "Mind the goblins south."],
     interests: ["lodging"],
   };
-  // PVE so the `look` monster-line cases have monsters to render.
+  // PVE so the `look` hostile-line cases have hostiles to render.
   const w = new WorldState("pve");
   w.hydrate([square, inn], [zofia]);
   return w;

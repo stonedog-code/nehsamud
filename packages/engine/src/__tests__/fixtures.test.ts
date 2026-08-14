@@ -9,36 +9,33 @@
  *     catalog (a typo here breaks navigation at runtime, after
  *     the seed has happily upserted both ends).
  *   - NPC roomEnumKey references resolve to a real room.
- *   - Alignment and mobType values are restricted to the known
- *     vocab (the Prisma column accepts any string; the application
- *     layer expects these specific values).
+ *   - Tags are non-empty, lowercase and free of duplicates. There is no
+ *     permitted VOCABULARY any more — tags are pack-defined, and an engine
+ *     test asserting which ones exist would put back the fixed taxonomy
+ *     that `alignment` and `mobType` were. What is still checkable is that
+ *     they are well-formed.
  */
 
 import { parseCommand } from "../commands/parser.js";
 import {
-  CLASSES,
+  CHARACTER_OPTION_GROUPS,
   EFFECTS,
   ITEMS,
-  MONSTERS,
+  HOSTILES,
   NPCS,
-  RACES,
   ROOMS,
 } from "../seed/fixtures/index.js";
 
-const ALIGNMENTS = new Set([
-  "lawful_good",
-  "good",
-  "neutral",
-  "evil",
-]);
-const MOB_TYPES = new Set([
-  "humanoid",
-  "beast",
-  "undead",
-  "elemental",
-  "construct",
-]);
 const PRONOUNS = new Set(["he", "she", "they"]);
+
+/** A tag is a lowercase label; the engine attaches no meaning to which. */
+function malformedTags(tags: string[]): boolean {
+  return (
+    tags.length === 0 ||
+    new Set(tags).size !== tags.length ||
+    tags.some((t) => t.trim() === "" || t !== t.toLowerCase())
+  );
+}
 
 function uniqueKeys<T>(items: T[], key: (t: T) => string): boolean {
   const seen = new Set<string>();
@@ -51,11 +48,24 @@ function uniqueKeys<T>(items: T[], key: (t: T) => string): boolean {
 }
 
 describe("fixture integrity — unique keys", () => {
-  it("race slugs are unique", () => {
-    expect(uniqueKeys(RACES, (r) => r.slug)).toBe(true);
+  it("character option group keys are unique", () => {
+    expect(uniqueKeys(CHARACTER_OPTION_GROUPS, (g) => g.key)).toBe(true);
   });
-  it("class slugs are unique", () => {
-    expect(uniqueKeys(CLASSES, (c) => c.slug)).toBe(true);
+  it("option slugs are unique within each group", () => {
+    // Within, not across: two groups may both offer a "standard", and the
+    // database keys them by (group, slug) for exactly that reason.
+    for (const group of CHARACTER_OPTION_GROUPS) {
+      expect(uniqueKeys(group.options, (o) => o.slug)).toBe(true);
+    }
+  });
+  it("every group offers at least one selectable option", () => {
+    // A required group with nothing to pick would leave the creation flow
+    // asking a question with no valid answer.
+    for (const group of CHARACTER_OPTION_GROUPS) {
+      expect(
+        group.options.filter((o) => o.selectable !== false).length,
+      ).toBeGreaterThan(0);
+    }
   });
   it("room enumKeys are unique", () => {
     expect(uniqueKeys(ROOMS, (r) => r.enumKey)).toBe(true);
@@ -63,8 +73,8 @@ describe("fixture integrity — unique keys", () => {
   it("item names are unique", () => {
     expect(uniqueKeys(ITEMS, (i) => i.name)).toBe(true);
   });
-  it("monster slugs are unique", () => {
-    expect(uniqueKeys(MONSTERS, (m) => m.slug)).toBe(true);
+  it("hostile slugs are unique", () => {
+    expect(uniqueKeys(HOSTILES, (m) => m.slug)).toBe(true);
   });
   it("NPC slugs are unique", () => {
     expect(uniqueKeys(NPCS, (n) => n.slug)).toBe(true);
@@ -144,16 +154,12 @@ describe("fixture integrity — map topology", () => {
 });
 
 describe("fixture integrity — enum vocab", () => {
-  it("monster alignments are in the known vocab", () => {
-    const errors = MONSTERS.filter((m) => !ALIGNMENTS.has(m.alignment));
+  it("hostile tags are well-formed", () => {
+    const errors = HOSTILES.filter((m) => malformedTags(m.tags));
     expect(errors).toEqual([]);
   });
-  it("monster mobTypes are in the known vocab", () => {
-    const errors = MONSTERS.filter((m) => !MOB_TYPES.has(m.mobType));
-    expect(errors).toEqual([]);
-  });
-  it("NPC alignments are in the known vocab", () => {
-    const errors = NPCS.filter((n) => !ALIGNMENTS.has(n.alignment));
+  it("NPC tags are well-formed", () => {
+    const errors = NPCS.filter((n) => malformedTags(n.tags));
     expect(errors).toEqual([]);
   });
   it("NPC pronouns are in the known vocab", () => {
@@ -167,11 +173,12 @@ describe("fixture integrity — minimum content", () => {
     // Floors come from the Phase 3 plan — if a future PR drops
     // below them, that's a regression that should require an
     // explicit test-update.
-    expect(RACES.length).toBeGreaterThanOrEqual(4);
-    expect(CLASSES.length).toBeGreaterThanOrEqual(4);
+    for (const group of CHARACTER_OPTION_GROUPS) {
+      expect(group.options.length).toBeGreaterThanOrEqual(4);
+    }
     expect(ROOMS.length).toBeGreaterThanOrEqual(15);
     expect(ITEMS.length).toBeGreaterThanOrEqual(15);
-    expect(MONSTERS.length).toBeGreaterThanOrEqual(6);
+    expect(HOSTILES.length).toBeGreaterThanOrEqual(6);
     expect(NPCS.length).toBeGreaterThanOrEqual(8);
     expect(EFFECTS.length).toBeGreaterThanOrEqual(6);
   });

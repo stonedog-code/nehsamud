@@ -22,10 +22,13 @@ describe("hopper-mud-db public surface", () => {
     // generated client. Method-shape probing is enough.
     expect(typeof client.$disconnect).toBe("function");
     expect(typeof client.$connect).toBe("function");
-    // Phase 2 callsites the MUD service will use:
+    // Callsites the engine uses:
     expect(typeof client.mudRoom.findUnique).toBe("function");
     expect(typeof client.mudNpc.findMany).toBe("function");
-    expect(typeof client.mudMonster.upsert).toBe("function");
+    expect(typeof client.mudHostile.upsert).toBe("function");
+    expect(typeof client.mudCharacterOptionGroup.findMany).toBe("function");
+    expect(typeof client.mudCharacterOption.findUnique).toBe("function");
+    expect(typeof client.mudPlayerOption.findFirst).toBe("function");
   });
 
   it("exports the PrismaClient symbol for direct typing", () => {

@@ -101,6 +101,13 @@ The schema can change destructively — see §1. Requirements, not suggestions:
   deployment has no such table. It becomes `owner_id`, an opaque string the
   host supplies and the engine never interprets. *(This closes PRD-0001 OQ5.)*
 
+**Status: R6–R9 delivered** (NEH-651). One caveat worth stating rather than
+leaving to be rediscovered: `prisma/standalone-bootstrap.sql` is **still
+required** for an empty database. No current schema references `public.user`,
+but `migrate deploy` replays history and the *init* migration still creates
+the constraint on the way past. Removing the workaround means squashing and
+re-baselining both live databases — an operator job, not a code change.
+
 ### 4.3 Vocabulary
 
 - **R10** Player-facing strings the engine composes come from the pack's
@@ -169,18 +176,26 @@ care-centre pack is held to the stricter bar its audience needs.
 |---|---|
 | **1** | `ContentPack` type + validation (R1, R5). Townsmee moves into a pack unchanged. |
 | **2** | Spawn point and seeding take the pack (R2–R4). |
-| **3** | Schema rebuild: hostile, option groups, owner_id, tags (R6–R9, R14–R15). |
+| **3** | ✅ Schema rebuild: hostile, option groups, owner_id, tags (R6–R9, R14–R15). Delivered by NEH-651, out of order — it was the only phase with a deadline. |
 | **4** | Message catalog and product name (R10–R12). |
 | **5** | The care-centre pack, authored against the finished contract. |
 
-Phase 3 is the one with a deadline attached: it is free only while the player
-tables are empty.
+Phase 3 had the deadline attached — it was free only while the player tables
+were empty — so it was taken **first**, out of sequence. Phases 1 and 2 (the
+`ContentPack` type, validation, and pack-driven seeding) are still open; the
+fixtures under `packages/engine/src/seed/fixtures/` remain compiled into the
+engine, and they now declare the pack's *axes* as data even though the module
+itself is not yet a pack.
 
 ## 8. Success criteria
 
 1. A new world ships with no engine change.
 2. No genre word appears in engine source or schema — checked by a test, not
-   by review.
+   by review. *(The schema half is enforced by
+   `packages/engine-db/src/__tests__/schema-vocabulary.test.ts`. Engine source
+   is not yet covered by an equivalent check, and one string still names the
+   genre: the AI dialog prompt in `talk.ts` opens "You are a non-player
+   character in a fantasy MUD." That belongs to the phase-4 message catalog.)*
 3. Townsmee plays identically to before.
 4. HopperGuard serves a care centre with no hostiles and no combat vocabulary
    anywhere in what a resident can see.

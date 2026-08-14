@@ -94,8 +94,17 @@ export interface SessionState {
 
 /** The unchanging-per-session half of a character, shown by `statistics`. */
 export interface CharacterSheet {
-  raceName: string;
-  className: string;
+  /**
+   * What the character was built from — one entry per axis the pack
+   * declares, in the order it declares them, as `[groupName, optionName]`
+   * pairs ready to render.
+   *
+   * A list rather than the `raceName` / `className` fields this used to
+   * have, because those two names were the schema's assumption that every
+   * world builds characters the same way. Empty is a valid character in a
+   * pack with no creation axes.
+   */
+  options: Array<{ groupName: string; optionName: string }>;
   strength: number;
   intelligence: number;
   wisdom: number;
@@ -106,10 +115,9 @@ export interface CharacterSheet {
 }
 
 /**
- * Default character HP for a fresh session. Phase 7 will derive
- * this from race + class constitution mods loaded from the
- * MudPlayer row; for now everyone starts with the same pool so
- * Phase 5 combat tuning has a stable baseline.
+ * Default character HP for a session with no player row behind it — the
+ * in-memory tests, and the window before creation completes. A real
+ * character's pool is derived from its constitution in `character.ts`.
  */
 export const DEFAULT_MAX_HP = 30;
 

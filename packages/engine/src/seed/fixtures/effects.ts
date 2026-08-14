@@ -2,7 +2,7 @@
  * Status effect catalog — TS-only data, not persisted to mud.*.
  *
  * Phase 5's combat system applies these to a per-fight in-memory
- * buff/debuff list keyed by the player/monster id; effects expire
+ * buff/debuff list keyed by the player/hostile id; effects expire
  * when their `durationRounds` countdown hits zero (or the fight
  * ends). The Python codebase shipped this as a DB table; the
  * focused rewrite drops the table because effects only matter for

@@ -70,10 +70,11 @@ jobs:
       - run: npm ci
       - run: npm run build --workspace @nehsamud/engine-db
       - run: npm run build --workspace @nehsamud/engine
-      # nehsamud cannot yet stand up a database of its own — the init
-      # migration's FK to the host's `public.user` makes an empty database
-      # impossible to migrate. See prisma/standalone-bootstrap.sql; the real
-      # fix is PRD-0002 phase 3.
+      # The init migration's FK to the host's `public.user` still makes an
+      # empty database impossible to migrate, even though later migrations
+      # drop the constraint — `migrate deploy` replays history from the
+      # start. See prisma/standalone-bootstrap.sql for why removing it is a
+      # baseline job rather than a code change.
       - name: Bootstrap a standalone database
         run: npm run db:bootstrap --workspace @nehsamud/engine-db
       - name: Apply migrations

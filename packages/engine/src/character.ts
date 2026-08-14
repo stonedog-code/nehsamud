@@ -1,8 +1,8 @@
 /**
- * Turning a race and a class into a character.
+ * Turning a set of character-creation choices into a character.
  *
- * Until this module existed, `mud.race` and `mud.class` carried seven
- * modifier columns each, seeded with real numbers, that nothing ever read.
+ * Until this module existed, the option tables carried seven modifier
+ * columns each, seeded with real numbers, that nothing ever read.
  * `createPlayer` wrote no attributes at all — so every player took the
  * schema's defaults and had 10 in all seven, whoever they picked — and
  * `SessionRegistry.open()` hard-coded 30 HP with a comment promising this
@@ -12,6 +12,12 @@
  * That is the worst version of a choice: prominent, previewed, and cosmetic.
  * It implies a depth that is not there.
  *
+ * DERIVATION TAKES A LIST, NOT TWO ARGUMENTS. It used to take a race and a
+ * class, which is the same assumption the two hardcoded tables made: that
+ * every world builds a character from exactly those two axes. A pack now
+ * declares its own, so this sums however many it declares — including none,
+ * which yields a character of straight base attributes rather than an error.
+ *
  * ONE SOURCE OF TRUTH, DELIBERATELY. The web app previews these numbers on
  * the creation screen before any of it reaches a database, so it needs the
  * same arithmetic. It imports THIS module rather than keeping its own table —
@@ -19,7 +25,7 @@
  * which meant the preview promised numbers the engine would never produce.
  */
 
-/** The seven attributes, as modifiers a race or class contributes. */
+/** The seven attributes, as modifiers one chosen option contributes. */
 export interface AttributeMods {
   strengthMod: number;
   intelligenceMod: number;
@@ -52,27 +58,26 @@ export const BASE_ATTRIBUTE = 10;
 /** No attribute drops below this, however unlucky the combination. */
 export const MIN_ATTRIBUTE = 1;
 
-/** Base + race + class, floored. */
-export function deriveAttributes(
-  race: AttributeMods,
-  characterClass: AttributeMods,
-): Attributes {
-  const combine = (r: number, c: number): number =>
-    Math.max(MIN_ATTRIBUTE, BASE_ATTRIBUTE + r + c);
+/**
+ * Base plus every chosen option's modifiers, floored.
+ *
+ * Order does not matter — addition — so a pack may declare its axes in any
+ * sequence and reorder them later without changing anybody's character.
+ */
+export function deriveAttributes(chosen: readonly AttributeMods[]): Attributes {
+  const total = (pick: (m: AttributeMods) => number): number =>
+    Math.max(
+      MIN_ATTRIBUTE,
+      chosen.reduce((sum, mods) => sum + pick(mods), BASE_ATTRIBUTE),
+    );
   return {
-    strength: combine(race.strengthMod, characterClass.strengthMod),
-    intelligence: combine(
-      race.intelligenceMod,
-      characterClass.intelligenceMod,
-    ),
-    wisdom: combine(race.wisdomMod, characterClass.wisdomMod),
-    charisma: combine(race.charismaMod, characterClass.charismaMod),
-    constitution: combine(
-      race.constitutionMod,
-      characterClass.constitutionMod,
-    ),
-    dexterity: combine(race.dexterityMod, characterClass.dexterityMod),
-    luck: combine(race.luckMod, characterClass.luckMod),
+    strength: total((m) => m.strengthMod),
+    intelligence: total((m) => m.intelligenceMod),
+    wisdom: total((m) => m.wisdomMod),
+    charisma: total((m) => m.charismaMod),
+    constitution: total((m) => m.constitutionMod),
+    dexterity: total((m) => m.dexterityMod),
+    luck: total((m) => m.luckMod),
   };
 }
 
@@ -132,9 +137,9 @@ export const MIN_PLAYER_DAMAGE = 1;
  * Base damage before weapon, level scaling and variance.
  *
  * Deliberately a *small* slope. Strength ranges roughly 6–15 here, so this
- * spans about 3–8 — enough that an Orc Warrior visibly out-hits a Halfling
- * Mage, without making the weapon in your hand irrelevant. Equipment should
- * stay the bigger lever; a class that wins unarmed makes `equip` pointless.
+ * spans about 3–8 — enough that a strong build visibly out-hits a frail one,
+ * without making the weapon in your hand irrelevant. Equipment should stay
+ * the bigger lever; a build that wins unarmed makes `equip` pointless.
  */
 export function baseDamageFor(strength: number): number {
   const raw =
@@ -151,16 +156,15 @@ export interface DerivedCharacter {
 }
 
 /**
- * Everything a creation screen wants to show, from the two chosen rows.
+ * Everything a creation screen wants to show, from the chosen rows.
  *
  * Level 1, because that is what is being created. A caller wanting the
  * numbers at another level uses `maxHpForLevel` directly.
  */
 export function deriveCharacter(
-  race: AttributeMods,
-  characterClass: AttributeMods,
+  chosen: readonly AttributeMods[],
 ): DerivedCharacter {
-  const attributes = deriveAttributes(race, characterClass);
+  const attributes = deriveAttributes(chosen);
   return {
     attributes,
     maxHp: maxHpForLevel(1, attributes.constitution),

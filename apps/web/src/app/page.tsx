@@ -42,7 +42,7 @@ export default function HomePage() {
                 <p className="description">{mode.description}</p>
 
                 <ul className="capability-list">
-                  <Capability label="Monsters" on={caps.monsters} />
+                  <Capability label="Monsters" on={caps.hostiles} />
                   <Capability label="Combat" on={caps.combat} />
                   <Capability label="Player combat" on={caps.playerVersusPlayer} />
                   <Capability label="Looting" on={caps.looting} />

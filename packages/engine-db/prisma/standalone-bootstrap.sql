@@ -1,6 +1,6 @@
 -- Prepare a database that nehsamud owns outright, before the migrations run.
 --
--- This exists because of one line in the init migration: `mud.player.user_id`
+-- This exists because of one line in the INIT migration: `mud.player.user_id`
 -- carries a foreign key to `public.user(user_id)` — a table this package does
 -- not own, does not create, and cannot assume. That is fine in the deploy
 -- model it was written for (HopperGuard and the mud sharing one Postgres) and
@@ -18,14 +18,22 @@
 -- rather than one it has been pointed at by mistake. Every migration then
 -- applies normally.
 --
--- THIS IS A WORKAROUND AND SHOULD NOT SURVIVE. The real fix is dropping the
--- cross-schema FK for an opaque owner id — PRD-0002 phase 3 (NEH-650). It was
--- not done here because it also removes HopperGuard's ON DELETE CASCADE from
--- Hopper user to MUD character, and changing another product's data-deletion
--- behaviour inside a web-app PR is not a trade worth making quietly.
+-- WHY THIS IS STILL HERE AFTER THE FK WAS DROPPED. Two later migrations
+-- remove the constraint (20260814054500) and rename the column to `owner_id`
+-- (20260814150000), so no CURRENT schema references `public.user` at all.
+-- But `migrate deploy` replays history from the beginning, and the init
+-- migration still creates the constraint on its way past. Verified against an
+-- empty database on 2026-08-14: without this file the deploy still dies at
+-- migration 1 with `42P01`.
+--
+-- Removing it therefore means editing the init migration, which changes its
+-- checksum and breaks `migrate deploy` on every database that has already
+-- applied it — including production. That is a squash-and-baseline job with
+-- an operator step on both live databases, not a code change, and it is worth
+-- doing only when something else already requires one.
 --
 -- The stand-in is deliberately minimal: one column, no behaviour. Nothing
--- should ever read from it.
+-- reads from it, and after the migrations run nothing references it either.
 
 CREATE TABLE IF NOT EXISTS "public"."user" (
     "user_id" UUID PRIMARY KEY

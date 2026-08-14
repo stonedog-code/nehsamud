@@ -8,11 +8,11 @@ import {
 } from "../modes";
 
 describe("mode capabilities", () => {
-  it("gives Exploration no monsters, no combat, no PVP, no looting", () => {
+  it("gives Exploration no hostiles, no combat, no PVP, no looting", () => {
     // This is the senior-safe build's whole premise (PRD-0001 R3, R4).
     // If this test ever needs changing, the product decision changed.
     expect(MODES.exploration.capabilities).toEqual({
-      monsters: false,
+      hostiles: false,
       combat: false,
       playerVersusPlayer: false,
       looting: false,
@@ -40,10 +40,10 @@ describe("mode capabilities", () => {
     }
   });
 
-  it("never enables combat without monsters to fight", () => {
+  it("never enables combat without hostiles to fight", () => {
     for (const mode of GAME_MODES) {
       const caps = MODES[mode].capabilities;
-      if (caps.combat) expect(caps.monsters).toBe(true);
+      if (caps.combat) expect(caps.hostiles).toBe(true);
     }
   });
 

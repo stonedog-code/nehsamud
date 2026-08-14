@@ -1,7 +1,7 @@
 /**
  * loadPlayer + createPlayer + loadOrCreatePlayer + savePlayerState
- * against a stubbed PrismaClient. No real DB; Phase 9 integration
- * suite exercises the real schema.
+ * against a stubbed PrismaClient. No real DB; the integration suite
+ * exercises the real schema.
  */
 
 import { deriveCharacter } from "../character.js";
@@ -12,19 +12,25 @@ import {
   savePlayerState,
 } from "../persistence/player-store.js";
 
+/** One row of `mud.player_option`, joined out as the select asks for it. */
+interface MockPlayerOption {
+  group: { key: string; name: string; position: number };
+  option: { slug: string; name: string };
+}
+
 interface MockPlayer {
   id: string;
-  userId: string;
+  ownerId: string;
   name: string;
   roomId: string | null;
   currentHp: number;
   maxHp: number;
   experience: number;
   level: number;
-  /* The seven attribute columns and the two relations `statistics` reads.
-   * A fake missing them does not fail loudly — `loadPlayer` unpacks
-   * `row.race.name` and throws a TypeError from inside persistence, which
-   * surfaces three layers away as a socket that never answers. */
+  /* The seven attribute columns and the option rows `statistics` reads.
+   * A fake missing them does not fail loudly — `loadPlayer` unpacks them
+   * and throws a TypeError from inside persistence, which surfaces three
+   * layers away as a socket that never answers. */
   strength: number;
   intelligence: number;
   wisdom: number;
@@ -32,11 +38,10 @@ interface MockPlayer {
   constitution: number;
   dexterity: number;
   luck: number;
-  race: { name: string };
-  class: { name: string };
+  options: MockPlayerOption[];
 }
 
-/** Modifier sets the fake race/class rows carry, mirroring the real seed. */
+/** Modifier sets the fake option rows carry, mirroring the real seed. */
 const DWARF_MODS = {
   strengthMod: 2,
   intelligenceMod: 0,
@@ -65,20 +70,97 @@ const DEFAULT_ATTRIBUTES = {
   constitution: 10,
   dexterity: 10,
   luck: 10,
-  race: { name: "Human" },
-  class: { name: "Warrior" },
+  options: [
+    // Deliberately stored out of order, so the sort in `toRecord` is doing
+    // something: a character sheet that reshuffles between logins is the
+    // failure this guards.
+    {
+      group: { key: "class", name: "Class", position: 1 },
+      option: { slug: "warrior", name: "Warrior" },
+    },
+    {
+      group: { key: "race", name: "Race", position: 0 },
+      option: { slug: "human", name: "Human" },
+    },
+  ],
+};
+
+/** The record shape both load paths must produce for DEFAULT_ATTRIBUTES. */
+const EXPECTED_DEFAULTS = {
+  options: [
+    { groupKey: "race", groupName: "Race", optionSlug: "human", optionName: "Human" },
+    {
+      groupKey: "class",
+      groupName: "Class",
+      optionSlug: "warrior",
+      optionName: "Warrior",
+    },
+  ],
+  attributes: {
+    strength: 10,
+    intelligence: 10,
+    wisdom: 10,
+    charisma: 10,
+    constitution: 10,
+    dexterity: 10,
+    luck: 10,
+  },
+};
+
+/** The two axes the fake world declares, as the group table holds them. */
+const GROUP_ROWS = [
+  { id: "group-race", key: "race", name: "Race", required: true, position: 0 },
+  {
+    id: "group-class",
+    key: "class",
+    name: "Class",
+    required: true,
+    position: 1,
+  },
+];
+
+const OPTION_ROWS: Record<
+  string,
+  { id: string; slug: string; name: string; selectable: boolean } & typeof DWARF_MODS
+> = {
+  "group-race:dwarf": {
+    id: "option-dwarf",
+    slug: "dwarf",
+    name: "Dwarf",
+    selectable: true,
+    ...DWARF_MODS,
+  },
+  "group-class:mage": {
+    id: "option-mage",
+    slug: "mage",
+    name: "Mage",
+    selectable: true,
+    ...MAGE_MODS,
+  },
+  // Present but withdrawn — a character already built from it keeps working,
+  // a new one may not choose it.
+  "group-class:necromancer": {
+    id: "option-necromancer",
+    slug: "necromancer",
+    name: "Necromancer",
+    selectable: false,
+    ...MAGE_MODS,
+  },
 };
 
 function makePrisma(options: {
   existingPlayer?: MockPlayer;
-  raceId?: string;
-  classId?: string;
+  /** Declare no axes at all — the care-centre pack. */
+  noGroups?: boolean;
+  /** Declared axes with nothing selectable on them — an unseeded world. */
+  noOptions?: boolean;
 }) {
+  const groups = options.noGroups ? [] : GROUP_ROWS;
   const findFirst = jest.fn(async () => options.existingPlayer ?? null);
   const create = jest.fn(async (args: { data: Record<string, unknown> }) => {
     const created: MockPlayer = {
       id: "player-new",
-      userId: args.data.userId as string,
+      ownerId: args.data.ownerId as string,
       name: args.data.name as string,
       roomId: args.data.roomId as string | null,
       currentHp: args.data.currentHp as number,
@@ -92,27 +174,42 @@ function makePrisma(options: {
   const update = jest.fn(async () => undefined);
   return {
     mudPlayer: { findFirst, create, update },
-    mudRace: {
-      // Keyed by SLUG now, and reporting `playable`, because createPlayer
-      // looks up exactly what the player chose instead of taking whatever
-      // came first alphabetically.
-      findUnique: jest.fn(async (args: { where: { slug: string } }) =>
-        options.raceId && args.where.slug === "dwarf"
-          ? { id: options.raceId, playable: true, ...DWARF_MODS }
-          : null,
-      ),
-      findMany: jest.fn(async () =>
-        options.raceId ? [{ slug: "dwarf", name: "Dwarf" }] : [],
+    mudCharacterOptionGroup: {
+      // Serves both shapes the module asks for: the bare group list that
+      // `createPlayer` validates against, and the nested selectable options
+      // that `listOptionGroups` returns to a creation flow.
+      findMany: jest.fn(async (args?: { select?: { options?: unknown } }) =>
+        groups.map((g) =>
+          args?.select?.options
+            ? {
+                ...g,
+                options: options.noOptions
+                  ? []
+                  : Object.entries(OPTION_ROWS)
+                      .filter(
+                        ([key, row]) =>
+                          key.startsWith(`${g.id}:`) && row.selectable,
+                      )
+                      .map(([, row]) => ({
+                        slug: row.slug,
+                        name: row.name,
+                        description: "",
+                      })),
+              }
+            : g,
+        ),
       ),
     },
-    mudClass: {
-      findUnique: jest.fn(async (args: { where: { slug: string } }) =>
-        options.classId && args.where.slug === "mage"
-          ? { id: options.classId, playable: true, ...MAGE_MODS }
-          : null,
-      ),
-      findMany: jest.fn(async () =>
-        options.classId ? [{ slug: "mage", name: "Mage" }] : [],
+    mudCharacterOption: {
+      // Keyed by (group, slug), because slugs are unique only within their
+      // group — a lookup by slug alone could answer one axis with an option
+      // belonging to another.
+      findUnique: jest.fn(
+        async (args: { where: { groupId_slug: { groupId: string; slug: string } } }) => {
+          if (options.noOptions) return null;
+          const { groupId, slug } = args.where.groupId_slug;
+          return OPTION_ROWS[`${groupId}:${slug}`] ?? null;
+        },
       ),
     },
   };
@@ -132,7 +229,7 @@ describe("loadPlayer", () => {
   it("returns the existing row when the user already has a character", async () => {
     const player: MockPlayer = {
       id: "player-1",
-      userId: "u-1",
+      ownerId: "u-1",
       name: "Aelric",
       roomId: "room-saved",
       currentHp: 17,
@@ -146,30 +243,20 @@ describe("loadPlayer", () => {
       prisma as unknown as Parameters<typeof loadPlayer>[0],
       "u-1",
     );
-    // The row is MAPPED, not returned raw: the two relations collapse to
-    // `raceName`/`className` and the seven attribute columns move under
-    // `attributes`, so a caller cannot reach a stat without going through the
-    // shape both load paths share.
+    // The row is MAPPED, not returned raw: the option rows collapse to a
+    // flat list in DECLARED ORDER, and the seven attribute columns move
+    // under `attributes`, so a caller cannot reach a stat without going
+    // through the shape both load paths share.
     expect(result).toEqual({
       id: player.id,
-      userId: player.userId,
+      ownerId: player.ownerId,
       name: player.name,
       roomId: player.roomId,
       currentHp: player.currentHp,
       maxHp: player.maxHp,
       experience: player.experience,
       level: player.level,
-      raceName: "Human",
-      className: "Warrior",
-      attributes: {
-        strength: 10,
-        intelligence: 10,
-        wisdom: 10,
-        charisma: 10,
-        constitution: 10,
-        dexterity: 10,
-        luck: 10,
-      },
+      ...EXPECTED_DEFAULTS,
     });
     expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
   });
@@ -177,29 +264,29 @@ describe("loadPlayer", () => {
 
 describe("createPlayer", () => {
   it("creates a player at the spawn room with the supplied name", async () => {
-    const prisma = makePrisma({ raceId: "race-1", classId: "class-1" });
+    const prisma = makePrisma({});
     const result = await createPlayer(
       prisma as unknown as Parameters<typeof createPlayer>[0],
       "u-1",
       "Aelric",
       "room-spawn",
-      { raceSlug: "dwarf", classSlug: "mage" },
+      { race: "dwarf", class: "mage" },
     );
     expect(prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
-    expect(result.userId).toBe("u-1");
+    expect(result.ownerId).toBe("u-1");
     expect(result.name).toBe("Aelric");
     expect(result.roomId).toBe("room-spawn");
     expect(result.currentHp).toBe(result.maxHp);
   });
 
   it("trims surrounding whitespace from the name", async () => {
-    const prisma = makePrisma({ raceId: "race-1", classId: "class-1" });
+    const prisma = makePrisma({});
     const result = await createPlayer(
       prisma as unknown as Parameters<typeof createPlayer>[0],
       "u-1",
       "  Aelric  ",
       "room-spawn",
-      { raceSlug: "dwarf", classSlug: "mage" },
+      { race: "dwarf", class: "mage" },
     );
     expect(result.name).toBe("Aelric");
     const createArgs = prisma.mudPlayer.create.mock.calls[0]?.[0] as {
@@ -209,60 +296,112 @@ describe("createPlayer", () => {
   });
 
   it("rejects a blank name before touching the database", async () => {
-    const prisma = makePrisma({ raceId: "race-1", classId: "class-1" });
+    const prisma = makePrisma({});
     await expect(
       createPlayer(
         prisma as unknown as Parameters<typeof createPlayer>[0],
         "u-1",
         "   ",
         "room-spawn",
-  { raceSlug: "dwarf", classSlug: "mage" },
+  { race: "dwarf", class: "mage" },
       ),
     ).rejects.toThrow(/name is required/);
     expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
   });
 
-  it("refuses a race that is not playable, rather than substituting one", async () => {
+  it("refuses an option that does not exist, rather than substituting one", async () => {
     // The silent fallback this replaces is what made every character in the
     // database the same race and class.
-    const prisma = makePrisma({ raceId: "race-1", classId: "class-1" });
+    const prisma = makePrisma({});
     await expect(
       createPlayer(
         prisma as unknown as Parameters<typeof createPlayer>[0],
         "u-1",
         "Aelric",
         "room-spawn",
-        { raceSlug: "wombat", classSlug: "mage" },
+        { race: "wombat", class: "mage" },
       ),
-    ).rejects.toThrow(/not a playable race/);
+    ).rejects.toThrow(/not a selectable Race/);
     expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
   });
 
-  it("refuses a class that is not playable", async () => {
-    const prisma = makePrisma({ raceId: "race-1", classId: "class-1" });
+  it("refuses an option that exists but is not selectable", async () => {
+    const prisma = makePrisma({});
     await expect(
       createPlayer(
         prisma as unknown as Parameters<typeof createPlayer>[0],
         "u-1",
         "Aelric",
         "room-spawn",
-        { raceSlug: "dwarf", classSlug: "accountant" },
+        { race: "dwarf", class: "necromancer" },
       ),
-    ).rejects.toThrow(/not a playable class/);
+    ).rejects.toThrow(/not a selectable Class/);
     expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
   });
 
-  it("writes attributes and hp derived from the chosen race and class", async () => {
+  it("refuses to leave a required axis unanswered", async () => {
+    const prisma = makePrisma({});
+    await expect(
+      createPlayer(
+        prisma as unknown as Parameters<typeof createPlayer>[0],
+        "u-1",
+        "Aelric",
+        "room-spawn",
+        { race: "dwarf" },
+      ),
+    ).rejects.toThrow(/"Class" is required/);
+    expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an answer for an axis the pack does not declare", async () => {
+    // A stale client, or a script written against another pack. Dropping it
+    // silently would create a character that is not the one asked for.
+    const prisma = makePrisma({});
+    await expect(
+      createPlayer(
+        prisma as unknown as Parameters<typeof createPlayer>[0],
+        "u-1",
+        "Aelric",
+        "room-spawn",
+        { race: "dwarf", class: "mage", alignment: "evil" },
+      ),
+    ).rejects.toThrow(/"alignment" is not a character option group/);
+    expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
+  });
+
+  it("creates a character for a pack that declares no axes at all", async () => {
+    // The care-centre world: you are simply a resident. It must produce a
+    // real character rather than refusing for lack of a race.
+    const prisma = makePrisma({ noGroups: true });
+    const result = await createPlayer(
+      prisma as unknown as Parameters<typeof createPlayer>[0],
+      "u-1",
+      "Margaret",
+      "room-spawn",
+      {},
+    );
+    expect(result.name).toBe("Margaret");
+    const data = (
+      prisma.mudPlayer.create.mock.calls[0]?.[0] as {
+        data: Record<string, unknown>;
+      }
+    ).data;
+    expect(data.options).toEqual({ create: [] });
+    // Straight base attributes, not zero.
+    expect(data.strength).toBe(10);
+  });
+
+  it("writes attributes and hp derived from the chosen options", async () => {
     // The seven attribute columns were never written at all, so every
     // character took the schema default of 10 across the board — which is
     // why `statistics` showed identical sheets for every pairing.
-    const prisma = makePrisma({ raceId: "race-1", classId: "class-1" });
+    const prisma = makePrisma({});
     await createPlayer(
       prisma as unknown as Parameters<typeof createPlayer>[0],
       "u-1",
       "Aelric",
       "room-spawn",
-      { raceSlug: "dwarf", classSlug: "mage" },
+      { race: "dwarf", class: "mage" },
     );
     const data = (
       prisma.mudPlayer.create.mock.calls[0]?.[0] as {
@@ -270,7 +409,7 @@ describe("createPlayer", () => {
       }
     ).data;
 
-    const expected = deriveCharacter(DWARF_MODS, MAGE_MODS);
+    const expected = deriveCharacter([DWARF_MODS, MAGE_MODS]);
     expect(data.strength).toBe(expected.attributes.strength);
     expect(data.constitution).toBe(expected.attributes.constitution);
     expect(data.maxHp).toBe(expected.maxHp);
@@ -280,20 +419,26 @@ describe("createPlayer", () => {
     expect(data.strength).not.toBe(10);
   });
 
-  it("writes the chosen race and class ids, not a default", async () => {
-    const prisma = makePrisma({ raceId: "race-1", classId: "class-1" });
+  it("writes the chosen option ids in one statement with the player", async () => {
+    const prisma = makePrisma({});
     await createPlayer(
       prisma as unknown as Parameters<typeof createPlayer>[0],
       "u-1",
       "Aelric",
       "room-spawn",
-      { raceSlug: "dwarf", classSlug: "mage" },
+      { race: "dwarf", class: "mage" },
     );
     const createArgs = prisma.mudPlayer.create.mock.calls[0]?.[0] as {
       data: Record<string, unknown>;
     };
-    expect(createArgs.data.raceId).toBe("race-1");
-    expect(createArgs.data.classId).toBe("class-1");
+    // Nested-create, not a second statement: a crash between the two would
+    // leave a character with no record of what it is.
+    expect(createArgs.data.options).toEqual({
+      create: [
+        { groupId: "group-race", optionId: "option-dwarf" },
+        { groupId: "group-class", optionId: "option-mage" },
+      ],
+    });
   });
 });
 
@@ -301,7 +446,7 @@ describe("loadOrCreatePlayer", () => {
   it("returns the existing player row when one exists for the user", async () => {
     const player: MockPlayer = {
       id: "player-1",
-      userId: "u-1",
+      ownerId: "u-1",
       name: "Traveler-abc",
       roomId: "room-saved",
       currentHp: 17,
@@ -316,57 +461,47 @@ describe("loadOrCreatePlayer", () => {
       "u-1",
       "room-spawn",
     );
-    // The row is MAPPED, not returned raw: the two relations collapse to
-    // `raceName`/`className` and the seven attribute columns move under
-    // `attributes`, so a caller cannot reach a stat without going through the
-    // shape both load paths share.
+    // The row is MAPPED, not returned raw: the option rows collapse to a
+    // flat list in DECLARED ORDER, and the seven attribute columns move
+    // under `attributes`, so a caller cannot reach a stat without going
+    // through the shape both load paths share.
     expect(result).toEqual({
       id: player.id,
-      userId: player.userId,
+      ownerId: player.ownerId,
       name: player.name,
       roomId: player.roomId,
       currentHp: player.currentHp,
       maxHp: player.maxHp,
       experience: player.experience,
       level: player.level,
-      raceName: "Human",
-      className: "Warrior",
-      attributes: {
-        strength: 10,
-        intelligence: 10,
-        wisdom: 10,
-        charisma: 10,
-        constitution: 10,
-        dexterity: 10,
-        luck: 10,
-      },
+      ...EXPECTED_DEFAULTS,
     });
     expect(prisma.mudPlayer.create).not.toHaveBeenCalled();
   });
 
   it("creates a new player at the spawn room when none exists", async () => {
-    const prisma = makePrisma({ raceId: "race-1", classId: "class-1" });
+    const prisma = makePrisma({});
     const result = await loadOrCreatePlayer(
       prisma as unknown as Parameters<typeof loadOrCreatePlayer>[0],
       "u-1",
       "room-spawn",
     );
     expect(prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
-    expect(result.userId).toBe("u-1");
+    expect(result.ownerId).toBe("u-1");
     expect(result.roomId).toBe("room-spawn");
     expect(result.currentHp).toBe(result.maxHp);
     expect(result.name).toMatch(/^Traveler-[a-f0-9]{8}$/);
   });
 
-  it("throws when the seed hasn't run (no playable race or class)", async () => {
-    const prisma = makePrisma({});
+  it("throws when the seed hasn't run (a required axis with nothing on it)", async () => {
+    const prisma = makePrisma({ noOptions: true });
     await expect(
       loadOrCreatePlayer(
         prisma as unknown as Parameters<typeof loadOrCreatePlayer>[0],
         "u-1",
         "room-spawn",
       ),
-    ).rejects.toThrow(/no playable race or class/);
+    ).rejects.toThrow(/no selectable option for required group/);
   });
 });
 

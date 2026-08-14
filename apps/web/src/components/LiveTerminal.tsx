@@ -24,7 +24,7 @@ import type { GameMode } from "@/lib/modes";
  *   1. POST /api/mud/dev-token          — an identity the engine will accept
  *   2. AUTH                             — the engine answers AUTH_OK, and for
  *                                         a brand-new user asks for a name
- *   3. CREATE_CHARACTER                 — name, race and class in one frame,
+ *   3. CREATE_CHARACTER                 — name and every option in one frame,
  *                                         because this client already has all
  *                                         three from the creation screen
  *
@@ -36,8 +36,8 @@ import type { GameMode } from "@/lib/modes";
 
 export interface LiveCharacter {
   name: string;
-  race: string;
-  characterClass: string;
+  /** groupKey → optionSlug for every axis the pack declares. */
+  options: Record<string, string>;
 }
 
 type Status = "connecting" | "playing" | "failed";
@@ -104,8 +104,7 @@ export function LiveTerminal({
         send(socket!, {
           type: "CREATE_CHARACTER",
           name: character.name,
-          race: character.race,
-          class: character.characterClass,
+          options: character.options,
         });
         if (!cancelled) setStatus("playing");
       });
@@ -136,7 +135,7 @@ export function LiveTerminal({
     };
     // The character is fixed for the life of this page — it comes from the
     // URL — so reconnecting on every render would be a connection storm.
-  }, [append, character.name, character.race, character.characterClass]);
+  }, [append, character.name, character.options]);
 
   // Keep the newest line in view as the transcript grows.
   useEffect(() => {

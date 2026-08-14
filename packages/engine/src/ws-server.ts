@@ -49,11 +49,12 @@ import {
   createPlayer,
   loadPlayer,
   loadInventory,
+  listOptionGroups,
   saveInventory,
   saveRoomItems,
   savePlayerState,
-  listPlayableClasses,
-  listPlayableRaces,
+  type CharacterChoice,
+  type OptionGroup,
 } from "./persistence/player-store.js";
 import { RoomArtGenerator } from "./persistence/room-art-generator.js";
 import { levelForXp } from "./progression.js";
@@ -76,12 +77,17 @@ export interface ClientMessageFrame {
  * The web client has a full picker with a stat preview, so making it replay
  * a conversational flow would be theatre. The text flow below exists for
  * terminal users; this exists for a client that already knows the answers.
+ *
+ * `options` is a map of group key → option slug, e.g.
+ * `{ race: "elf", class: "mage" }`. It was two fixed fields, `race` and
+ * `class`, which meant the wire protocol carried the same genre assumption
+ * the schema did: a world with different axes could not express a character
+ * over it at all.
  */
 export interface CreateCharacterFrame {
   type: "CREATE_CHARACTER";
   name: string;
-  race: string;
-  class: string;
+  options: Record<string, string>;
 }
 
 export type ClientFrame =
@@ -186,8 +192,7 @@ const DEFAULT_SPAWN_ROOM_ENUM_KEY = "TOWNSMEE_TOWNSQUARE";
  * the other depending on how you got here.
  */
 function sheetFor(record: {
-  raceName: string;
-  className: string;
+  options: Array<{ groupName: string; optionName: string }>;
   attributes: {
     strength: number;
     intelligence: number;
@@ -199,10 +204,23 @@ function sheetFor(record: {
   };
 }): import("./world/session.js").CharacterSheet {
   return {
-    raceName: record.raceName,
-    className: record.className,
+    options: record.options.map((o) => ({
+      groupName: o.groupName,
+      optionName: o.optionName,
+    })),
     ...record.attributes,
   };
+}
+
+function nextUnanswered(
+  groups: OptionGroup[],
+  choice: CharacterChoice,
+): OptionGroup | undefined {
+  // Skipped when it has nothing to offer even if required: a required group
+  // with no selectable options is a seeding fault, and asking a question
+  // with no valid answer would strand the player in a loop they cannot
+  // leave. `createPlayer` reports it as the seeding fault it is.
+  return groups.find((g) => choice[g.key] === undefined && g.options.length > 0);
 }
 
 /**
@@ -261,7 +279,7 @@ export class MudWsServer {
    */
   private readonly pendingCreation = new Map<
     WebSocket,
-    { name?: string; raceSlug?: string }
+    { name?: string; choice: CharacterChoice }
   >();
 
   constructor(options: MudWsServerOptions) {
@@ -350,10 +368,7 @@ export class MudWsServer {
     if (frame.type === "CREATE_CHARACTER") {
       const userId = state.userId;
       if (!userId) return;
-      void this.createCharacter(socket, userId, frame.name, {
-        raceSlug: frame.race,
-        classSlug: frame.class,
-      });
+      void this.createCharacter(socket, userId, frame.name, frame.options ?? {});
       return;
     }
 
@@ -417,10 +432,10 @@ export class MudWsServer {
       // No player yet — prompt the user to create one. The next
       // CLIENT_MESSAGE is interpreted as `create <name>` (or just
       // `<name>`) and we route it through `handleCreatePlayer`.
-      this.pendingCreation.set(socket, {});
+      this.pendingCreation.set(socket, { choice: {} });
       send(socket, {
         type: "SERVER_MESSAGE",
-        message: "Welcome to HopperMud! You don't have a character yet.",
+        message: "Welcome! You don't have a character yet.",
       });
       send(socket, {
         type: "SERVER_MESSAGE",
@@ -513,7 +528,7 @@ export class MudWsServer {
       this.pendingCreation.delete(socket);
       return;
     }
-    const pending = this.pendingCreation.get(socket) ?? {};
+    const pending = this.pendingCreation.get(socket) ?? { choice: {} };
     const trimmed = raw.trim();
 
     /* ── Step 1: the name ──────────────────────────────────────── */
@@ -530,61 +545,64 @@ export class MudWsServer {
       }
       pending.name = name;
       this.pendingCreation.set(socket, pending);
-      await this.promptForRace(socket);
+      // Ask the first question, or create straight away for a pack that has
+      // none to ask.
+      await this.askNextOrCreate(socket, userId, pending);
       return;
     }
 
-    /* ── Step 2: the race ──────────────────────────────────────── */
-    if (pending.raceSlug === undefined) {
-      const races = await listPlayableRaces(this.prisma);
-      const chosen = matchOption(races, trimmed);
-      if (!chosen) {
-        send(socket, {
-          type: "SERVER_MESSAGE",
-          message: `"${trimmed}" isn't one of the races. Choose one of: ${races
-            .map((r) => r.name)
-            .join(", ")}.`,
-        });
-        return;
-      }
-      pending.raceSlug = chosen.slug;
-      this.pendingCreation.set(socket, pending);
-      const classes = await listPlayableClasses(this.prisma);
+    /* ── Step 2..n: one question per axis the pack declares ────── */
+    const groups = await listOptionGroups(this.prisma);
+    const asking = nextUnanswered(groups, pending.choice);
+    if (!asking) {
+      // Every question is answered and we are still here — a stray frame
+      // arriving between the last answer and the create finishing. Ignore it
+      // rather than treating it as an answer to nothing.
+      return;
+    }
+
+    const chosen = matchOption(asking.options, trimmed);
+    if (!chosen) {
       send(socket, {
         type: "SERVER_MESSAGE",
-        message: `${chosen.name} it is. Now choose a class: ${classes
-          .map((c) => c.name)
+        message: `"${trimmed}" isn't one of the ${asking.name.toLowerCase()} choices. Choose one of: ${asking.options
+          .map((o) => o.name)
           .join(", ")}.`,
       });
       return;
     }
-
-    /* ── Step 3: the class, then create ────────────────────────── */
-    const classes = await listPlayableClasses(this.prisma);
-    const chosenClass = matchOption(classes, trimmed);
-    if (!chosenClass) {
-      send(socket, {
-        type: "SERVER_MESSAGE",
-        message: `"${trimmed}" isn't one of the classes. Choose one of: ${classes
-          .map((c) => c.name)
-          .join(", ")}.`,
-      });
-      return;
-    }
-
-    await this.createCharacter(socket, userId, pending.name, {
-      raceSlug: pending.raceSlug,
-      classSlug: chosenClass.slug,
-    });
+    pending.choice[asking.key] = chosen.slug;
+    this.pendingCreation.set(socket, pending);
+    await this.askNextOrCreate(socket, userId, pending, chosen.name);
   }
 
-  /** List the playable races and ask the player to pick one. */
-  private async promptForRace(socket: WebSocket): Promise<void> {
-    if (!this.prisma) return;
-    const races = await listPlayableRaces(this.prisma);
+  /**
+   * Ask the next unanswered axis, or create the character once none remain.
+   *
+   * One method for both, because "are there more questions" and "is it time
+   * to create" are the same question — and a pack that declares no axes at
+   * all must land in the create branch on its very first call rather than
+   * waiting forever for an answer nobody was asked for.
+   */
+  private async askNextOrCreate(
+    socket: WebSocket,
+    userId: string,
+    pending: { name?: string; choice: CharacterChoice },
+    acknowledging?: string,
+  ): Promise<void> {
+    if (!this.prisma || pending.name === undefined) return;
+    const groups = await listOptionGroups(this.prisma);
+    const next = nextUnanswered(groups, pending.choice);
+    if (!next) {
+      await this.createCharacter(socket, userId, pending.name, pending.choice);
+      return;
+    }
+    const prefix = acknowledging ? `${acknowledging} it is. Now c` : "C";
     send(socket, {
       type: "SERVER_MESSAGE",
-      message: `Choose a race: ${races.map((r) => r.name).join(", ")}.`,
+      message: `${prefix}hoose a ${next.name.toLowerCase()}: ${next.options
+        .map((o) => o.name)
+        .join(", ")}.`,
     });
   }
 
@@ -600,7 +618,7 @@ export class MudWsServer {
     socket: WebSocket,
     userId: string,
     name: string,
-    choice: { raceSlug: string; classSlug: string },
+    choice: CharacterChoice,
   ): Promise<void> {
     if (!this.world || !this.prisma) return;
 
@@ -640,7 +658,7 @@ export class MudWsServer {
       // Anything else keeps the name and re-asks the choices.
       const pending = this.pendingCreation.get(socket);
       if (pending) {
-        delete pending.raceSlug;
+        pending.choice = {};
         if (nameTaken) delete pending.name;
         this.pendingCreation.set(socket, pending);
       }
@@ -649,9 +667,13 @@ export class MudWsServer {
 
     this.pendingCreation.delete(socket);
     this.playerIdBySocket.set(socket, created.id);
+    // "Aelric the Elf Mage" for a pack with those axes, plain "Aelric" for a
+    // pack with none. Composed from what the character actually has rather
+    // than from two fields the engine assumes every character carries.
+    const described = created.options.map((o) => o.optionName).join(" ");
     send(socket, {
       type: "SERVER_MESSAGE",
-      message: `Welcome, ${created.name} the ${created.raceName} ${created.className}! Your adventure begins…`,
+      message: `Welcome, ${created.name}${described ? ` the ${described}` : ""}! Your adventure begins…`,
     });
     await this.startSessionAndAutoLook(socket, userId, spawnRoom.id, {
       characterName: created.name,

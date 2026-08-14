@@ -5,7 +5,7 @@
  *   <Room name>
  *   <Room description>
  *   You see here: <npc names>      (only when at least one NPC)
- *   Monsters here: <monster names + HP> (only when at least one)
+ *   Hostiles here: <hostile names + HP> (only when at least one)
  *   Exits: <direction list>         (only when at least one exit)
  *
  * Auto-respawn: if the session is in a `defeated` state when the
@@ -31,10 +31,15 @@ function renderRoom(world: WorldState, room: CachedRoom): string[] {
   if (npcs.length > 0) {
     lines.push(`You see here: ${npcs.map((n) => n.name).join(", ")}.`);
   }
-  const monsters = world.getMonstersInRoom(room.id);
-  if (monsters.length > 0) {
+  const hostiles = world.getHostilesInRoom(room.id);
+  if (hostiles.length > 0) {
     lines.push(
-      `Monsters here: ${monsters
+      // "Monsters", not "Hostiles" — the CODE is genre-free (PRD-0002 R6),
+      // the COPY is still this pack's. Renaming what a fantasy player reads
+      // is a product change, and player-facing strings become pack-supplied
+      // in phase 4 (R10). A world with nothing to fight never reaches this
+      // line, so the word costs the care-centre deployment nothing.
+      `Monsters here: ${hostiles
         .map((m) => `${m.name} (${m.currentHp}/${m.maxHp} HP)`)
         .join(", ")}.`,
     );

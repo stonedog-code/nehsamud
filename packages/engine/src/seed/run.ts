@@ -28,12 +28,13 @@ async function main(): Promise<void> {
   console.log("Seeding mud.* catalog…");
   try {
     const counts = await seedCatalog(prisma);
-    console.log(`✓ races=${counts.races}`);
-    console.log(`✓ classes=${counts.classes}`);
+    console.log(
+      `✓ character options=${counts.options} across ${counts.optionGroups} group(s)`,
+    );
     console.log(`✓ rooms=${counts.rooms}`);
     console.log(`✓ items=${counts.items}`);
     console.log(`✓ placed=${counts.placements}`);
-    console.log(`✓ monsters=${counts.monsters}`);
+    console.log(`✓ hostiles=${counts.hostiles}`);
     console.log(`✓ npcs=${counts.npcs}`);
 
     // Everything removed is named. A seed that silently deletes content is
@@ -45,9 +46,9 @@ async function main(): Promise<void> {
       ["rooms", pruned.rooms],
       ["npcs", pruned.npcs],
       ["items", pruned.items],
-      ["monsters", pruned.monsters],
-      ["races", pruned.races],
-      ["classes", pruned.classes],
+      ["hostiles", pruned.hostiles],
+      ["character option groups", pruned.optionGroups],
+      ["character options", pruned.options],
     ];
     const removed = removals.filter(([, keys]) => keys.length > 0);
     if (removed.length === 0) {

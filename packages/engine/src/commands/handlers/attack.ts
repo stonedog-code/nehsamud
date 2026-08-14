@@ -1,18 +1,18 @@
 /**
- * `attack <target>` — one round of combat against a monster in
+ * `attack <target>` — one round of combat against a hostile in
  * the current room.
  *
  * Resolution per command invocation:
- *   1. Player swings: monster takes damage derived from the player's
+ *   1. Player swings: hostile takes damage derived from the player's
  *      strength (see character.ts), their weapon, level and a spread
  *      (Phase 7 will add weapon + str-mod scaling once inventory
  *      and equipped-weapon tracking is wired).
- *   2. If the monster survives, it counter-attacks: player takes
- *      `monster.baseDamage` damage.
+ *   2. If the hostile survives, it counter-attacks: player takes
+ *      `hostile.baseDamage` damage.
  *   3. Lines describe both swings + the surviving HP totals.
  *
  * End states:
- *   - Monster killed → +experience to the session, line announces
+ *   - Hostile killed → +experience to the session, line announces
  *     the death and the XP gain.
  *   - Player killed → session.defeated=true; line tells the
  *     player they've been beaten. The next `look` triggers the
@@ -73,8 +73,8 @@ export const attackHandler: CommandHandler = ({
   }
   // Swinging at something ends the rest, whether or not the swing lands.
   session.resting = false;
-  const monster = world.findMonsterInRoom(target, session.currentRoomId);
-  if (!monster) {
+  const hostile = world.findHostileInRoom(target, session.currentRoomId);
+  if (!hostile) {
     return reply(`There's no "${target}" here to attack.`);
   }
 
@@ -99,25 +99,25 @@ export const attackHandler: CommandHandler = ({
     armour: equippedArmour(session.inventory),
   };
   const foe: Combatant = {
-    name: monster.name,
+    name: hostile.name,
     level: 1,
-    baseDamage: monster.baseDamage,
+    baseDamage: hostile.baseDamage,
   };
 
   // 1. Player swing.
   const swing = resolveAttack(player, foe, roll);
   const remainingHp = swing.hit
-    ? world.damageMonster(monster.instanceId, swing.damage)
-    : monster.currentHp;
+    ? world.damageHostile(hostile.instanceId, swing.damage)
+    : hostile.currentHp;
   lines.push(
-    describeAttack("You", `the ${monster.name}`, swing, {
+    describeAttack("You", `the ${hostile.name}`, swing, {
       secondPerson: true,
     }),
   );
   if (swing.hit && remainingHp === 0) {
     const award = awardExperience(
       session.experience,
-      monster.experience,
+      hostile.experience,
       // Constitution scales the per-level HP gain, so a Dwarf Warrior pulls
       // further ahead of a Halfling Mage with every level rather than
       // keeping a fixed lead that is noise by level 100.
@@ -127,7 +127,7 @@ export const attackHandler: CommandHandler = ({
     session.level = award.level;
 
     lines.push(
-      `The ${monster.name} falls. You gain ${monster.experience} XP. (${session.experience} total.)`,
+      `The ${hostile.name} falls. You gain ${hostile.experience} XP. (${session.experience} total.)`,
     );
 
     if (award.leveledUp) {
@@ -153,15 +153,15 @@ export const attackHandler: CommandHandler = ({
 
     return reply(...lines);
   }
-  lines.push(`The ${monster.name} has ${remainingHp}/${monster.maxHp} HP left.`);
+  lines.push(`The ${hostile.name} has ${remainingHp}/${hostile.maxHp} HP left.`);
 
   // 2. Counter-attack, resolved by the same rules and the same RNG.
   const counter = resolveAttack(foe, player, roll);
   session.currentHp = Math.max(0, session.currentHp - counter.damage);
   lines.push(
     counter.hit
-      ? `${describeAttack(`The ${monster.name}`, "you", counter)} (${session.currentHp}/${session.maxHp} HP.)`
-      : `The ${monster.name} swings at you and misses.`,
+      ? `${describeAttack(`The ${hostile.name}`, "you", counter)} (${session.currentHp}/${session.maxHp} HP.)`
+      : `The ${hostile.name} swings at you and misses.`,
   );
   if (session.currentHp === 0) {
     session.defeated = true;

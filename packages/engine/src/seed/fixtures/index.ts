@@ -5,8 +5,7 @@
  * reorganized later without callsite churn.
  */
 
-export { RACES } from "./races.js";
-export { CLASSES } from "./classes.js";
+export { CHARACTER_OPTION_GROUPS } from "./character-options.js";
 import { BARROWDEEP_ROOMS as BARROWDEEP_ROOMS_INTERNAL } from "./rooms-barrowdeep.js";
 import { WILDS_ROOMS as WILDS_ROOMS_INTERNAL } from "./rooms-wilds.js";
 import { TOWNSMEE_ROOMS as TOWNSMEE_ROOMS_INTERNAL } from "./rooms.js";
@@ -30,25 +29,23 @@ export const ROOMS: RoomFixture[] = [
   ...BARROWDEEP_ROOMS_INTERNAL,
 ];
 export { ITEMS } from "./items.js";
-export { MONSTERS } from "./monsters.js";
+export { HOSTILES } from "./hostiles.js";
 export { NPCS } from "./npcs.js";
 export { EFFECTS } from "./effects.js";
 export {
   ITEM_PLACEMENTS,
-  MONSTER_SPAWNS,
+  HOSTILE_SPAWNS,
   type ItemPlacementFixture,
-  type MonsterSpawnFixture,
+  type HostileSpawnFixture,
 } from "./spawns.js";
 
 export type {
-  Alignment,
-  ClassFixture,
+  CharacterOptionFixture,
+  CharacterOptionGroupFixture,
   EffectFixture,
+  HostileFixture,
   ItemFixture,
   ItemType,
-  MobType,
-  MonsterFixture,
   NpcFixture,
-  RaceFixture,
   RoomFixture,
 } from "./types.js";
