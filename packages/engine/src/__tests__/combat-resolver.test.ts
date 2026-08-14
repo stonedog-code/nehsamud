@@ -3,6 +3,7 @@ import {
   CRIT_MULTIPLIER,
   DAMAGE_PER_LEVEL,
   MAX_HIT_CHANCE,
+  MAX_ARMOUR_ABSORB,
   MIN_DAMAGE_ON_HIT,
   MIN_HIT_CHANCE,
   createRng,
@@ -151,12 +152,89 @@ describe("resolveAttack — damage", () => {
     // invulnerable to a weak attacker, and that fight would never end.
     const plated = {
       ...GOBLIN,
-      armour: { name: "plate", protection: 9999 },
+      armour: [{ name: "plate", protection: 9999 }],
     };
     const o = resolveAttack(PLAYER, plated, scripted([0.01, 0.99, 0.5]));
     expect(o.hit).toBe(true);
-    expect(o.damage).toBe(MIN_DAMAGE_ON_HIT);
+    expect(o.damage).toBeGreaterThanOrEqual(MIN_DAMAGE_ON_HIT);
+    // A quarter of the swing gets through however absurd the protection.
+    expect(o.damage).toBe(Math.ceil(o.rawDamage * (1 - MAX_ARMOUR_ABSORB)));
     expect(o.absorbed).toBeGreaterThan(0);
+  });
+
+  it("sums protection across every worn piece", () => {
+    // The reason `armour` is a list (NEH-658): a helmet and a shield used to
+    // contend for one slot, so only one could ever contribute.
+    const roll = () => scripted([0.01, 0.99, 0.5]);
+    const bare = resolveAttack(PLAYER, GOBLIN, roll());
+    const helmed = resolveAttack(
+      PLAYER,
+      { ...GOBLIN, armour: [{ name: "helm", protection: 2 }] },
+      roll(),
+    );
+    const bothPieces = resolveAttack(
+      PLAYER,
+      {
+        ...GOBLIN,
+        armour: [
+          { name: "helm", protection: 2 },
+          { name: "shield", protection: 3 },
+        ],
+      },
+      roll(),
+    );
+    // Same seeded roll throughout, so the only thing moving is protection.
+    expect(bare.rawDamage).toBe(bothPieces.rawDamage);
+    expect(helmed.damage).toBeLessThan(bare.damage);
+    // The assertion the issue exists for: the SECOND piece has to matter too.
+    expect(bothPieces.damage).toBeLessThan(helmed.damage);
+    // Against the RULE, not a magic number: protection is subtracted, then
+    // bounded so a fraction of the swing always lands. Writing `toBe(5)`
+    // here asserted full subtraction and failed the moment the roll was
+    // small enough for the bound to bite — which is the bound working.
+    expect(bothPieces.damage).toBe(
+      Math.max(
+        Math.max(
+          MIN_DAMAGE_ON_HIT,
+          Math.ceil(bothPieces.rawDamage * (1 - MAX_ARMOUR_ABSORB)),
+        ),
+        bothPieces.rawDamage - 5,
+      ),
+    );
+  });
+
+  it("leaves an unarmoured defender completely unchanged", () => {
+    // The absorption bound must not become a stealth nerf to everyone. With
+    // no protection the subtraction never reaches it, so damage is the raw
+    // roll exactly as before.
+    for (let seed = 0; seed < 50; seed += 1) {
+      const o = resolveAttack(PLAYER, GOBLIN, createRng(seed));
+      if (o.hit) {
+        expect(o.damage).toBe(o.rawDamage);
+        expect(o.absorbed).toBe(0);
+      }
+    }
+  });
+
+  it("keeps a heavily-armoured defender killable, not immune", () => {
+    // The balance half of NEH-658. Before the fraction bound, a full set
+    // against a weak attacker meant every blow landed for exactly 1 — an
+    // armoured level-1 character was effectively immune to the whole
+    // starting area. Durable is the goal; invulnerable is a broken game.
+    const fullSet = [
+      { name: "helm", protection: 4 },
+      { name: "shield", protection: 5 },
+      { name: "mail", protection: 7 },
+    ];
+    let total = 0;
+    for (let seed = 0; seed < 40; seed += 1) {
+      const o = resolveAttack(PLAYER, { ...GOBLIN, armour: fullSet }, createRng(seed));
+      total += o.damage;
+      if (o.hit) expect(o.damage).toBeGreaterThan(0);
+    }
+    // 16 protection against this attacker would floor every hit at 1 under
+    // the old rule. It must be meaningfully more than that.
+    expect(total).toBeGreaterThan(40);
   });
 
   it("never deals negative damage or reports negative absorption", () => {

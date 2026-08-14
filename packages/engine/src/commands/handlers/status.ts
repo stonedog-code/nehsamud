@@ -104,10 +104,20 @@ export const statisticsHandler: CommandHandler = ({ session }) => {
     weapon
       ? `Wielding: ${weapon.name} (+${weapon.damage} damage)`
       : "Wielding: nothing",
-    armour
-      ? `Wearing: ${armour.name} (${armour.protection} protection)`
-      : "Wearing: nothing",
   );
+  // Every piece, listed. A single `Wearing:` line was right while only one
+  // could be worn; with several it would have to pick one to name, and a
+  // sheet that shows one of the three things protecting you is how a player
+  // concludes the other two are doing nothing.
+  if (armour.length === 0) {
+    lines.push("Wearing: nothing");
+  } else {
+    const total = armour.reduce((sum, piece) => sum + piece.protection, 0);
+    lines.push(`Wearing: ${total} protection`);
+    for (const piece of armour) {
+      lines.push(`  ${piece.name} (${piece.protection})`);
+    }
+  }
 
   const conditions: string[] = [];
   if (session.defeated) conditions.push("defeated");

@@ -37,14 +37,20 @@ export const getHandler: CommandHandler = ({ world, session, command }) => {
     return reply(`The ${stack.name} is no longer there.`);
   }
 
-  // Type and base value ride along from the catalog so `equip` and the
+  // Type, SLOT and base value ride along from the catalog so `equip` and the
   // combat wiring can read them without a lookup on every swing.
+  //
+  // The slot is what `equip` decides equippability from, so omitting it here
+  // makes everything a player picks up off the floor silently unequippable —
+  // and the failure is a flat refusal to equip a sword you are visibly
+  // holding, with nothing anywhere to explain it.
   const catalog = world.getItem(taken.itemId);
   addToInventory(session.inventory, {
     itemId: taken.itemId,
     name: taken.name,
     quantity: 1,
     type: catalog?.type,
+    slot: catalog?.slot,
     baseValue: catalog?.baseValue,
   });
 

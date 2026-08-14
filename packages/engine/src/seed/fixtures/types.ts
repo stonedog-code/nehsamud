@@ -82,6 +82,18 @@ export interface ItemFixture {
   name: string;
   description: string;
   type: ItemType;
+  /**
+   * Where it is worn or wielded — "weapon", "head", "shield", "body",
+   * "light". Absent means it cannot be equipped at all.
+   *
+   * Distinct from `type`: type says what a thing IS, slot says where it
+   * goes. Equipping used to key off type, and because all armour shares one
+   * type, a helmet and a shield could not both be worn.
+   *
+   * The names are pack data. The engine enforces one equipped item per slot
+   * and never asks what a slot means.
+   */
+  slot?: string;
   /** For weapons: base damage. For armor: damage reduction. For
    * lightsources: burn duration in minutes. Null for consumables
    * and misc. */

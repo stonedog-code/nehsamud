@@ -18,9 +18,12 @@ export interface InventoryEntry {
   name: string;
   quantity: number;
   /**
-   * True when this is the item the player is wearing or wielding for its
-   * type. At most one entry per item type may be equipped; `equip` enforces
-   * that by unequipping the previous holder of the slot.
+   * True when the player is wearing or wielding this.
+   *
+   * At most one entry per SLOT may be equipped; `equip` enforces that by
+   * unequipping the previous holder of that slot. It used to be one per
+   * item TYPE, which meant a helmet and a shield contended for the same
+   * place because all armour shares one type.
    */
   equipped?: boolean;
   /**
@@ -32,6 +35,11 @@ export interface InventoryEntry {
    * in-memory test fixtures) simply do not have one.
    */
   type?: number;
+  /**
+   * Where it is equipped — "weapon", "head", "shield", … Absent means the
+   * item cannot be equipped, or that the entry predates slots.
+   */
+  slot?: string | null;
   /** Weapon damage or armour protection, straight from the catalog. */
   baseValue?: number | null;
 }
