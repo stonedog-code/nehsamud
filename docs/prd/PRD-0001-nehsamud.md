@@ -158,6 +158,41 @@ Numbered and testable. **MUST** is v1 scope; **SHOULD** is v1 if it fits.
 - **R23** Scripting is unavailable in Exploration.
 - **R24** Scripts cannot do anything a player could not type by hand.
 
+#### The language
+
+Settled, and deliberately tiny (`packages/engine/src/scripting/`). Five
+forms and nothing else:
+
+```
+attack goblin              a command, passed through exactly as typed
+repeat 5: attack goblin    a fixed number of times
+while hp < 50: rest        while a condition about YOU holds
+if hp > 80: attack goblin  once, if it holds
+stop                       give up early
+```
+
+Conditions read `hp`, `maxhp`, `level` and `xp` — the player's own state,
+read-only — and compare against a number. There are no variables, no
+assignment, no arithmetic, no function calls, and no way to name anything.
+
+**That is the whole of R24 and most of R22.** A language whose only verbs
+are the game's own verbs cannot express something a player could not type,
+so there is no sandbox to escape from. Embedding a general-purpose
+interpreter and fencing it off is the harder problem, and the fence is the
+part that gets it wrong.
+
+**R21 lives in the runner, not in the host.** Three caps, because one is not
+enough: a command budget (the real defence — wall-clock alone will not stop
+a tight loop on a fast machine), a step budget (a loop can spin without
+issuing anything, and would never reach a command limit), and a wall-clock
+cap. A host that forgets to pass limits still gets the defaults.
+
+**The runner is a step machine.** It hands the host ONE command and waits to
+be given the resulting state, because `while hp < 50: rest` has to see the
+hp that resting produced. The obvious alternative — walk the program, return
+a list of commands — evaluates the condition once and so either emits
+nothing or loops forever.
+
 ### 4.6 PVP & looting
 
 - **R25** In `pvp`, `attack <player>` resolves against players in the room.
@@ -289,6 +324,14 @@ work twice, across a repository boundary.
   Server-side allows offline play and is the MajorMud-authentic answer; it is
   also a denial-of-service surface pointed at every other player in the world.
   *Leaning: client-side for v1, server-side behind a hard sandbox later.*
+
+  **Still open — and no longer blocking.** The language and its runner
+  (§4.5) are host-agnostic by construction: the runner hands out one command
+  and waits for the resulting state, so a browser driving that loop over the
+  WebSocket and the engine driving it in-process are the same loop. Whichever
+  answer this gets, the language does not change; only where it is
+  instantiated does. What is still undecided is offline execution, which only
+  server-side can offer, and who bears the cost of a runaway script.
 - **OQ2 — Standalone auth.** Its own accounts, `stonedog-auth`, or a dev-only
   minter? Blocks the standalone app leaving dev.
 - **OQ3 — Death cost in PVP.** R29 puts only items at stake. Is that enough
