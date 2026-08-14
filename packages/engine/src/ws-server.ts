@@ -499,6 +499,10 @@ export class MudWsServer {
       );
     }
 
+    // Also on the way in, so the auto-look below shows a world that is
+    // current rather than one frozen at the last player's last command.
+    this.announceRespawns(world);
+
     const look = await dispatch({
       world,
       session,
@@ -714,6 +718,11 @@ export class MudWsServer {
     }
     const command = parseCommand(raw);
     void (async () => {
+      // Time advances when somebody plays, not on a timer. Done before the
+      // command so a hostile that is due is present for the verb about to
+      // run — otherwise `look` would report an empty room and the next
+      // command would be answered by something the player never saw arrive.
+      this.announceRespawns(world);
       const roomBefore = session.currentRoomId;
       const result = await dispatch({
         world,
@@ -743,6 +752,27 @@ export class MudWsServer {
         socket.close(1000, "client-quit");
       }
     })();
+  }
+
+  /**
+   * Refill any spawn point that is due, and tell whoever is standing there.
+   *
+   * The message matters: a player in the room would otherwise have to type
+   * `look` again to discover something dangerous had walked back in, which
+   * reads as the game hiding it from them.
+   */
+  private announceRespawns(world: WorldState): void {
+    for (const instance of world.respawnDue()) {
+      for (const s of this.sessions.inRoom(instance.roomId)) {
+        const target = this.socketByUserId.get(s.userId);
+        if (target) {
+          send(target, {
+            type: "SERVER_MESSAGE",
+            message: `${instance.name} appears.`,
+          });
+        }
+      }
+    }
   }
 
   /**

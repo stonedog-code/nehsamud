@@ -24,8 +24,18 @@ import { resolveGameMode, type GameMode } from "../game-mode.js";
 import { WorldState } from "../world/world-state.js";
 import { MudWsServer } from "../ws-server.js";
 
-/** Shared with the engine's verifier via the environment, as in production. */
-const SECRET = process.env.JWT_SECRET ?? "integration-secret";
+/**
+ * Shared with the engine's verifier via the environment, as in production.
+ *
+ * Read at call time, not module load: `setup.ts` fills it in if it is unset,
+ * and a constant captured at import would miss that. The two sides MUST see
+ * the same value — when they did not, every socket authenticated against
+ * nothing and six tests failed with an empty transcript rather than an auth
+ * error.
+ */
+function secret(): string {
+  return process.env.JWT_SECRET ?? "integration-secret";
+}
 const AUDIENCE = "hopper-mud";
 
 function b64url(value: object): string {
@@ -47,7 +57,7 @@ export function token(ownerId: string): string {
     iat: now,
     exp: now + 600,
   });
-  const signature = createHmac("sha256", SECRET)
+  const signature = createHmac("sha256", secret())
     .update(`${header}.${payload}`)
     .digest("base64url");
   return `${header}.${payload}.${signature}`;
@@ -74,12 +84,18 @@ export interface Harness {
  */
 export async function bootEngine(
   mode: GameMode = resolveGameMode({ MUD_GAME_MODE: "pve" }),
+  /**
+   * The world's clock. Injected so a suite can assert respawn without
+   * waiting ninety seconds — the same seam the unit tests use, exercised
+   * here through a real socket.
+   */
+  now: () => number = Date.now,
 ): Promise<Harness> {
   const prisma = createDb({
     databaseUrl: process.env.MUD_DATABASE_URL!,
     log: ["error"],
   });
-  const world = new WorldState(mode);
+  const world = new WorldState(mode, now);
   await world.load(prisma);
 
   const http = createServer();

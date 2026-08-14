@@ -80,7 +80,10 @@ async function main(): Promise<void> {
       if (!room) continue;
       const catalog = world.getHostileBySlug(spawn.hostileSlug);
       if (!catalog) continue;
-      world.spawnHostile(spawn.hostileSlug, room.id);
+      // A spawn POINT, not a bare spawn: the world remembers this is where
+      // one belongs, so the place refills after a kill instead of emptying
+      // permanently (NEH-664).
+      world.registerSpawnPoint(spawn.hostileSlug, room.id);
       hostilesSpawned += 1;
     }
   }
