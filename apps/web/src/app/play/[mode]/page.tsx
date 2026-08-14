@@ -2,7 +2,9 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { deriveStats, findClass, findRace } from "@/lib/catalog";
 import { isGameMode, isModeEnabled, MODES } from "@/lib/modes";
+import { LiveTerminal } from "@/components/LiveTerminal";
 import { Terminal } from "@/components/Terminal";
+import { engineUrl } from "@/lib/mud-client";
 
 /**
  * The play surface for one mode.
@@ -56,6 +58,11 @@ export default async function PlayPage({
 
   const definition = MODES[mode];
 
+  // Live when an engine is configured for this deployment, preview otherwise.
+  // Not a fallback the page takes silently: which one is running changes what
+  // the words on screen mean, so it changes what the page says.
+  const live = engineUrl() !== undefined;
+
   return (
     <>
       <header className="page-header">
@@ -67,24 +74,45 @@ export default async function PlayPage({
         </p>
       </header>
 
-      <div className="notice">
-        <h2>Preview build</h2>
-        <p>
-          The world you are about to see is a local preview. It responds to
-          movement and <code>look</code>, but it is not yet the live game
-          server, so nothing you do here is saved.
-        </p>
-      </div>
+      {live ? (
+        <div className="notice">
+          <h2>Demo world</h2>
+          <p>
+            This is the real game engine. Characters here are anonymous — a
+            new one each visit — so nothing you do is kept.
+          </p>
+        </div>
+      ) : (
+        <div className="notice">
+          <h2>Preview build</h2>
+          <p>
+            No game engine is configured for this build, so the world below is
+            a small in-browser stand-in. It answers movement and{" "}
+            <code>look</code> and nothing else.
+          </p>
+        </div>
+      )}
 
-      <Terminal
-        mode={mode}
-        character={{
-          name: characterName,
-          race,
-          characterClass,
-          stats: deriveStats(race, characterClass),
-        }}
-      />
+      {live ? (
+        <LiveTerminal
+          mode={mode}
+          character={{
+            name: characterName,
+            race: race.key,
+            characterClass: characterClass.key,
+          }}
+        />
+      ) : (
+        <Terminal
+          mode={mode}
+          character={{
+            name: characterName,
+            race,
+            characterClass,
+            stats: deriveStats(race, characterClass),
+          }}
+        />
+      )}
     </>
   );
 }

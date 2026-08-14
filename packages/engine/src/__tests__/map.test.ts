@@ -266,6 +266,24 @@ describe("area transitions are announced", () => {
     );
   });
 
+  it("lets a player walk every direction the fixtures use", async () => {
+    // The bug this catches: `move` kept its OWN list of valid directions,
+    // and when the parser learned the four diagonals that copy was not
+    // updated. Diagonals parsed and were then refused, so every diagonal
+    // exit in the world was unwalkable — with valid fixtures, a correct
+    // parser, and nothing failing anywhere.
+    const used = new Set(
+      ROOMS.flatMap((room) => Object.keys(room.exits)),
+    );
+    expect(used.has("northeast")).toBe(true);
+
+    for (const direction of used) {
+      const from = ROOMS.find((r) => r.exits[direction]);
+      const text = await walk(from!.enumKey, direction);
+      expect(text).not.toContain("isn't a direction you can travel");
+    }
+  });
+
   it("says nothing when the move stays inside one area", async () => {
     // Otherwise it is noise on 39 renders to carry information that matters
     // on four of them.

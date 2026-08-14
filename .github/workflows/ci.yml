@@ -29,6 +29,38 @@ jobs:
     runs-on: ubuntu-latest
     # Gated on the fast lane so a broken unit tier does not spend browser time.
     needs: unit
+
+    # The e2e suite plays against the REAL engine, which needs a real
+    # database. Running it against the in-browser preview instead would make
+    # the whole tier a test of the stand-in: every verb, item and room the
+    # engine has would be uncovered while the suite stayed green.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mud
+          POSTGRES_PASSWORD: mud
+          POSTGRES_DB: mud
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # sslmode=disable is correct here and nowhere else: this Postgres is a
+      # container on the same host with a throwaway password, and it serves no
+      # TLS. `normalizeDatabaseUrl` leaves an explicit `disable` alone.
+      MUD_DATABASE_URL: postgresql://mud:mud@127.0.0.1:5432/mud?sslmode=disable
+      # Shared between the token minter and the engine's verifier. A test
+      # secret, in a public repo, guarding a throwaway container.
+      JWT_SECRET: e2e-secret-not-used-anywhere-real
+      MUD_GAME_MODE: pve
+      MUD_WS_PORT: "22009"
+      MUD_HTTP_PORT: "22010"
+      NEXT_PUBLIC_MUD_WS_URL: ws://127.0.0.1:22009
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -38,6 +70,16 @@ jobs:
       - run: npm ci
       - run: npm run build --workspace @nehsamud/engine-db
       - run: npm run build --workspace @nehsamud/engine
+      # nehsamud cannot yet stand up a database of its own — the init
+      # migration's FK to the host's `public.user` makes an empty database
+      # impossible to migrate. See prisma/standalone-bootstrap.sql; the real
+      # fix is PRD-0002 phase 3.
+      - name: Bootstrap a standalone database
+        run: npm run db:bootstrap --workspace @nehsamud/engine-db
+      - name: Apply migrations
+        run: npm run prisma:migrate:deploy --workspace @nehsamud/engine-db
+      - name: Seed the world
+        run: npm run seed
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v4

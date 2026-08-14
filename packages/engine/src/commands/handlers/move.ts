@@ -12,26 +12,37 @@
 
 import type { CommandHandler } from "../types.js";
 import { reply } from "../types.js";
+import { DIRECTIONS } from "../parser.js";
 import { findArea } from "../../seed/fixtures/areas.js";
 import { lookHandler } from "./look.js";
 
-const VALID_DIRECTIONS = new Set([
-  "north",
-  "south",
-  "east",
-  "west",
-  "up",
-  "down",
-]);
+/**
+ * The directions a player may walk.
+ *
+ * Taken from the parser's DIRECTIONS rather than listed again here. This used
+ * to be its own hardcoded set of six, and when NEH-620 taught the parser the
+ * four diagonals nobody updated the second copy — so `northeast` parsed
+ * perfectly and was then refused by this handler, in rooms that had a
+ * northeast exit. Every diagonal in the world was unwalkable, and nothing
+ * failed: the map fixtures were valid, the parser was correct, and the two
+ * lists simply disagreed.
+ */
+const VALID_DIRECTIONS = new Set<string>(DIRECTIONS);
 
 export const moveHandler: CommandHandler = async (ctx) => {
   const direction = ctx.command.args[0]?.toLowerCase();
   if (!direction) {
-    return reply("Move which direction? Try `north`, `south`, `east`, `west`, `up`, or `down`.");
+    return reply(
+      `Move which direction? Try one of: ${DIRECTIONS.join(", ")}.`,
+    );
   }
   if (!VALID_DIRECTIONS.has(direction)) {
     return reply(
-      `"${direction}" isn't a direction you can travel. Valid: north/south/east/west/up/down.`,
+      // Built from DIRECTIONS rather than typed out. The hand-written list
+      // said "north/south/east/west/up/down" long after the parser gained the
+      // four diagonals (NEH-620), so the game was telling players that
+      // `northeast` did not exist while happily accepting it.
+      `"${direction}" isn't a direction you can travel. Valid: ${DIRECTIONS.join(", ")}.`,
     );
   }
   const room = ctx.world.getRoom(ctx.session.currentRoomId);

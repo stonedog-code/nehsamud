@@ -32,28 +32,19 @@ datasource db {
   schemas  = ["mud", "public"]
 }
 
-/// Shadow of the public.user row that MudPlayer references. We don't
-/// own this table — the main hopper-db migration creates and manages
-/// it — but Prisma requires the model to exist for the FK relation
-/// to type-check. `@@schema("public")` points at the existing table
-/// and `@@ignore` keeps the generated client from offering CRUD on it.
-model User {
-  userId  String      @id @map("user_id") @db.Uuid
-  players MudPlayer[]
-
-  @@map("user")
-  @@ignore
-  @@schema("public")
-}
-
 /// A Hopper user's MUD character. One Hopper user can have multiple
 /// characters (the Login modal supports a single character today, but
 /// the model accommodates future expansion). Position is tracked via
 /// roomId; null means the character isn't currently spawned.
 model MudPlayer {
   id          String   @id @default(uuid()) @db.Uuid
-  /// FK to public.user.user_id — the Hopper account owning this MUD
-  /// character.
+  /// The account that owns this character, as an OPAQUE id.
+  ///
+  /// Deliberately not a foreign key any more. It referenced
+  /// `public.user(user_id)`, a table this package does not own — which
+  /// blocked a standalone deployment twice over: its database could not be
+  /// migrated, and its characters could not be created. The host decides what
+  /// this id means; the engine does not care.
   userId      String   @map("user_id") @db.Uuid
   name        String   @unique @db.VarChar(50)
   raceId      String   @map("race_id") @db.Uuid
@@ -95,7 +86,6 @@ model MudPlayer {
   /// queries and stale-character cleanup. Null until first login.
   lastSeenAt DateTime? @map("last_seen_at")
 
-  user      User           @relation(fields: [userId], references: [userId], onDelete: Cascade) @ignore
   race      MudRace        @relation(fields: [raceId], references: [id])
   class     MudClass       @relation(fields: [classId], references: [id])
   room      MudRoom?       @relation(fields: [roomId], references: [id])
