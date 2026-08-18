@@ -42,6 +42,19 @@ import type {
 import { WorldState } from "../world/world-state.js";
 import { createRng } from "../combat.js";
 import { MudWsServer } from "../ws-server.js";
+import {
+  collectFrom,
+  drainUntil,
+  drainUntilSilent,
+  parseMessages,
+} from "./support/ws-drain.js";
+
+// These tests are I/O bound on a socket, not CPU bound, and they run in the
+// hopperguard monorepo alongside ~30 other jest projects. jest's 5s default
+// is a wall-clock ceiling on a wait that is now condition-based, so it has
+// to sit above the drain helpers' own failure cap or it fires first and
+// throws away their diagnostic (NEH-924).
+jest.setTimeout(30_000);
 
 const SECRET = "mud-smoke-secret";
 const AUDIENCE = "hopper-mud";
@@ -356,76 +369,30 @@ async function authAndCreate(
   race = "dwarf",
   characterClass = "mage",
 ): Promise<void> {
+  // Each step waits for the prompt it asked for rather than for the socket
+  // to fall quiet. A half-finished creation is what every downstream
+  // movement/combat test inherits, so this helper is where a lost reply
+  // does the most damage (NEH-924).
   sock.send(JSON.stringify({ type: "AUTH", token: token(userId) }));
-  await drainUntilSilent(sock);
+  await drainUntil(sock, (m) => m.some((l) => l.includes("don't have a character")), {
+    label: "the no-character prompt",
+  });
   sock.send(
     JSON.stringify({ type: "CLIENT_MESSAGE", message: `create ${name}` }),
   );
-  await drainUntilSilent(sock);
+  await drainUntil(sock, (m) => m.some((l) => l.includes("Choose a race")), {
+    label: "the race prompt",
+  });
   sock.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: race }));
-  await drainUntilSilent(sock);
+  await drainUntil(sock, (m) => m.some((l) => l.includes("choose a class")), {
+    label: "the class prompt",
+  });
   sock.send(
     JSON.stringify({ type: "CLIENT_MESSAGE", message: characterClass }),
   );
-  await drainUntilSilent(sock);
-}
-
-/**
- * Drain incoming frames until no message arrives for `idleMs`.
- * Robust against varying line counts (combat outcomes shift between
- * 3 and 5 SERVER_MESSAGE lines depending on whether the swing kills
- * the hostile, lands a counter-attack, etc.).
- */
-function drainUntilSilent(sock: WebSocket, idleMs = 50): Promise<string[]> {
-  return new Promise((resolve) => {
-    const frames: string[] = [];
-    let timer: NodeJS.Timeout | undefined;
-    const reset = (): void => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        sock.off("message", onMsg);
-        resolve(frames);
-      }, idleMs);
-    };
-    const onMsg = (raw: WebSocket.RawData): void => {
-      frames.push(raw.toString());
-      reset();
-    };
-    sock.on("message", onMsg);
-    reset();
+  await drainUntil(sock, (m) => m.some((l) => l === ROOM_SQUARE.name), {
+    label: "the spawn-room render",
   });
-}
-
-/**
- * Start recording frames NOW, and return a stop-and-read function.
- *
- * `drainUntilSilent` cannot observe a broadcast caused by SOMEONE ELSE's
- * command: by the time the speaker's own drain has gone idle and we attach a
- * listener to the listener's socket, their frame has already arrived and been
- * dropped — `ws` does not buffer for a listener attached later. Every
- * "B heard it" assertion silently read an empty array, and every "B did NOT
- * hear it" assertion passed vacuously, which is the worse half: those tests
- * would still be green with the broadcast wired to the wrong room.
- *
- * So a recipient's collector must be attached BEFORE the speaker sends.
- */
-function collectFrom(sock: WebSocket): () => string[] {
-  const frames: string[] = [];
-  const onMsg = (raw: WebSocket.RawData): void => {
-    frames.push(raw.toString());
-  };
-  sock.on("message", onMsg);
-  return () => {
-    sock.off("message", onMsg);
-    return frames;
-  };
-}
-
-function parseMessages(frames: string[]): string[] {
-  return frames
-    .map((f) => JSON.parse(f) as { type: string; message?: string })
-    .filter((p) => p.type === "SERVER_MESSAGE")
-    .map((p) => p.message ?? "");
 }
 
 /* ── shared setup ─────────────────────────────────────────────────── */
@@ -484,7 +451,11 @@ describe("smoke / 2: user creation on AUTH", () => {
   it("first AUTH for a brand-new userId prompts for a name without auto-spawning", async () => {
     const client = await openClient(booted.url);
     client.send(JSON.stringify({ type: "AUTH", token: token("user-alpha") }));
-    const lines = parseMessages(await drainUntilSilent(client));
+    const lines = parseMessages(
+      await drainUntil(client, (m) => m.some((l) => l.includes("don't have a character")), {
+        label: "the no-character prompt",
+      }),
+    );
 
     // No character row should exist yet — the server waits for the
     // explicit `create <name>` message.
@@ -498,25 +469,39 @@ describe("smoke / 2: user creation on AUTH", () => {
   it("the creation flow asks for a name, a race and a class, then creates the row", async () => {
     const client = await openClient(booted.url);
     client.send(JSON.stringify({ type: "AUTH", token: token("user-alpha2") }));
-    await drainUntilSilent(client);
+    await drainUntil(client, (m) => m.some((l) => l.includes("don't have a character")), {
+      label: "the no-character prompt",
+    });
 
     // Name.
     client.send(
       JSON.stringify({ type: "CLIENT_MESSAGE", message: "create Aelric" }),
     );
-    const afterName = parseMessages(await drainUntilSilent(client));
+    const afterName = parseMessages(
+      await drainUntil(client, (m) => m.some((l) => l.includes("Choose a race")), {
+        label: "the race prompt",
+      }),
+    );
     expect(afterName.some((l) => l.includes("Choose a race"))).toBe(true);
     expect(booted.prisma.mudPlayer.create).not.toHaveBeenCalled();
 
     // Race.
     client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "dwarf" }));
-    const afterRace = parseMessages(await drainUntilSilent(client));
+    const afterRace = parseMessages(
+      await drainUntil(client, (m) => m.some((l) => l.includes("choose a class")), {
+        label: "the class prompt",
+      }),
+    );
     expect(afterRace.some((l) => l.includes("choose a class"))).toBe(true);
     expect(booted.prisma.mudPlayer.create).not.toHaveBeenCalled();
 
     // Class — and only now does the row appear.
     client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "mage" }));
-    const lines = parseMessages(await drainUntilSilent(client));
+    const lines = parseMessages(
+      await drainUntil(client, (m) => m.some((l) => l === ROOM_SQUARE.name), {
+        label: "the spawn-room render",
+      }),
+    );
 
     expect(booted.prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
     const createArgs = booted.prisma.mudPlayer.create.mock.calls[0]?.[0] as {
@@ -544,7 +529,9 @@ describe("smoke / 2: user creation on AUTH", () => {
   it("creates from a single CREATE_CHARACTER frame, for a client that already knows", async () => {
     const client = await openClient(booted.url);
     client.send(JSON.stringify({ type: "AUTH", token: token("user-frame") }));
-    await drainUntilSilent(client);
+    await drainUntil(client, (m) => m.some((l) => l.includes("don't have a character")), {
+      label: "the no-character prompt",
+    });
 
     client.send(
       JSON.stringify({
@@ -553,7 +540,11 @@ describe("smoke / 2: user creation on AUTH", () => {
         options: { race: "human", class: "warrior" },
       }),
     );
-    const lines = parseMessages(await drainUntilSilent(client));
+    const lines = parseMessages(
+      await drainUntil(client, (m) => m.some((l) => l === ROOM_SQUARE.name), {
+        label: "the spawn-room render",
+      }),
+    );
 
     expect(booted.prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
     const createArgs = booted.prisma.mudPlayer.create.mock.calls[0]?.[0] as {
@@ -576,23 +567,37 @@ describe("smoke / 2: user creation on AUTH", () => {
     // the refusal has to be observable.
     const client = await openClient(booted.url);
     client.send(JSON.stringify({ type: "AUTH", token: token("user-badrace") }));
-    await drainUntilSilent(client);
+    await drainUntil(client, (m) => m.some((l) => l.includes("don't have a character")), {
+      label: "the no-character prompt",
+    });
     client.send(
       JSON.stringify({ type: "CLIENT_MESSAGE", message: "create Corin" }),
     );
-    await drainUntilSilent(client);
+    await drainUntil(client, (m) => m.some((l) => l.includes("Choose a race")), {
+      label: "the race prompt",
+    });
 
     client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "wombat" }));
-    const rejected = parseMessages(await drainUntilSilent(client));
+    const rejected = parseMessages(
+      await drainUntil(
+        client,
+        (m) => m.some((l) => l.includes("isn't one of the race choices")),
+        { label: "the bad-race refusal" },
+      ),
+    );
     expect(
       rejected.some((l) => l.includes("isn't one of the race choices")),
     ).toBe(true);
     expect(booted.prisma.mudPlayer.create).not.toHaveBeenCalled();
 
     client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "dwarf" }));
-    await drainUntilSilent(client);
+    await drainUntil(client, (m) => m.some((l) => l.includes("choose a class")), {
+      label: "the class prompt",
+    });
     client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "mage" }));
-    await drainUntilSilent(client);
+    await drainUntil(client, (m) => m.some((l) => l === ROOM_SQUARE.name), {
+      label: "the spawn-room render",
+    });
     expect(booted.prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
 
     client.close();
@@ -626,7 +631,11 @@ describe("smoke / 3: movement", () => {
     await authAndCreate(client, "user-gamma");
 
     client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "north" }));
-    const lines = parseMessages(await drainUntilSilent(client));
+    const lines = parseMessages(
+      await drainUntil(client, (m) => m.some((l) => l === ROOM_INN.name), {
+        label: "the inn's auto-look",
+      }),
+    );
 
     // The auto-look of the inn must surface at minimum the room name
     // and one of its distinguishing features (the NPC Zofia).
@@ -640,6 +649,10 @@ describe("smoke / 3: movement", () => {
     await authAndCreate(client, "user-delta");
 
     client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "up" }));
+    // A negative assertion, so there is nothing to wait FOR — but
+    // `drainUntilSilent` does not return until the refusal has actually
+    // arrived, which is what keeps the check below from passing vacuously
+    // on an empty set.
     const lines = parseMessages(await drainUntilSilent(client));
     // The exact wording is owned by the move handler — assert only
     // that we did NOT auto-look into the inn (i.e. the move was
@@ -658,7 +671,11 @@ describe("smoke / 4: combat", () => {
 
     // Walk south into the goblin's room.
     client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "south" }));
-    const arrival = parseMessages(await drainUntilSilent(client));
+    const arrival = parseMessages(
+      await drainUntil(client, (m) => m.some((l) => l === ROOM_LOWER.name), {
+        label: "the lower quarter's auto-look",
+      }),
+    );
     expect(arrival.some((l) => l === ROOM_LOWER.name)).toBe(true);
     expect(arrival.some((l) => l.includes("Goblin"))).toBe(true);
     expect(booted.world.liveHostileCount()).toBe(1);
@@ -666,7 +683,14 @@ describe("smoke / 4: combat", () => {
     // Three swings @ PLAYER_BASE_DAMAGE=5 against baseHp=15 kills.
     for (let i = 0; i < 3; i += 1) {
       client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "attack goblin" }));
-      const swing = parseMessages(await drainUntilSilent(client));
+      // The third swing kills, so what closes the round differs — wait for
+      // whichever line this iteration is about to assert on.
+      const closes = i < 2 ? "HP left" : "20 XP";
+      const swing = parseMessages(
+        await drainUntil(client, (m) => m.some((l) => l.includes(closes)), {
+          label: `the swing reporting "${closes}"`,
+        }),
+      );
       if (i < 2) {
         expect(swing.some((l) => l.includes("strike"))).toBe(true);
         expect(swing.some((l) => l.includes("HP left"))).toBe(true);
@@ -695,12 +719,17 @@ describe("smoke / 4: combat", () => {
     await authAndCreate(first, "user-persist");
 
     first.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "south" }));
-    await drainUntilSilent(first);
+    await drainUntil(first, (m) => m.some((l) => l === ROOM_LOWER.name), {
+      label: "the lower quarter's auto-look",
+    });
     for (let i = 0; i < 3; i += 1) {
       first.send(
         JSON.stringify({ type: "CLIENT_MESSAGE", message: "attack goblin" }),
       );
-      await drainUntilSilent(first);
+      const closes = i < 2 ? "HP left" : "20 XP";
+      await drainUntil(first, (m) => m.some((l) => l.includes(closes)), {
+        label: `the swing reporting "${closes}"`,
+      });
     }
 
     const afterKill = booted.prisma._rows.get("user-persist");
@@ -742,7 +771,11 @@ describe("smoke / 5: multiple users share world state", () => {
     // Both walk into the goblin's room.
     userA.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "south" }));
     userB.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "south" }));
-    await Promise.all([drainUntilSilent(userA), drainUntilSilent(userB)]);
+    const arrived = (m: string[]): boolean => m.some((l) => l === ROOM_LOWER.name);
+    await Promise.all([
+      drainUntil(userA, arrived, { label: "A's arrival render" }),
+      drainUntil(userB, arrived, { label: "B's arrival render" }),
+    ]);
 
     // Damage varies and a blow can miss, so the exact numbers this used to
     // assert are no longer the point — and pinning them would assert the
@@ -756,19 +789,28 @@ describe("smoke / 5: multiple users share world state", () => {
       return undefined;
     };
 
+    // A swing ends either with the hostile's remaining HP or with it falling;
+    // wait for whichever came, never for the clock.
+    const swingResolved = (m: string[]): boolean =>
+      m.some((l) => /HP left/.test(l) || l.includes("falls"));
+
     // A swings until it actually lands, so the comparison below is meaningful
     // rather than trivially true on a miss.
     let aHp: number | undefined;
     for (let i = 0; i < 20 && (aHp === undefined || aHp === MON_GOBLIN.baseHp); i += 1) {
       userA.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "attack goblin" }));
-      aHp = remainingHp(parseMessages(await drainUntilSilent(userA)));
+      aHp = remainingHp(
+        parseMessages(await drainUntil(userA, swingResolved, { label: "A's swing" })),
+      );
       if (aHp === undefined) break; // it died — covered by the combat test
     }
     expect(aHp).toBeDefined();
     expect(aHp!).toBeLessThan(MON_GOBLIN.baseHp);
 
     userB.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "attack goblin" }));
-    const bHp = remainingHp(parseMessages(await drainUntilSilent(userB)));
+    const bHp = remainingHp(
+      parseMessages(await drainUntil(userB, swingResolved, { label: "B's swing" })),
+    );
 
     // B either sees the hostile at or below where A left it, or kills it.
     // What it must never see is the hostile back at full health.
@@ -819,12 +861,21 @@ describe("smoke / 6: communication reaches other sockets", () => {
     await authAndCreate(userA, "user-say-a", "Aria");
     await authAndCreate(userB, "user-say-b", "Bran");
 
-    const stopB = collectFrom(userB);
+    const fromB = collectFrom(userB);
     userA.send(
       JSON.stringify({ type: "CLIENT_MESSAGE", message: "say hello there" }),
     );
-    const heardByA = parseMessages(await drainUntilSilent(userA));
-    const heardByB = parseMessages(stopB());
+    const heardByA = parseMessages(
+      await drainUntil(userA, (m) => m.some((l) => l === 'You say "hello there"'), {
+        label: "A's own echo",
+      }),
+    );
+    const heardByB = parseMessages(
+      await fromB.until((m) => m.some((l) => l === 'Aria says "hello there"'), {
+        label: "the say broadcast on B",
+      }),
+    );
+    fromB.stop();
 
     expect(heardByA.some((l) => l === 'You say "hello there"')).toBe(true);
     // The speaker must not also receive the third-person form.
@@ -843,12 +894,19 @@ describe("smoke / 6: communication reaches other sockets", () => {
 
     // Move B out of the square before A speaks.
     userB.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "north" }));
-    await drainUntilSilent(userB);
+    await drainUntil(userB, (m) => m.some((l) => l === ROOM_INN.name), {
+      label: "B's move into the inn",
+    });
 
-    const stopB = collectFrom(userB);
+    const fromB = collectFrom(userB);
     userA.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "say private" }));
-    await drainUntilSilent(userA);
-    const heardByB = parseMessages(stopB());
+    // Waiting for A's own echo is the positive control: the broadcast has
+    // demonstrably been dispatched by the time B's frames are read, so B
+    // having heard nothing means something.
+    await drainUntil(userA, (m) => m.some((l) => l.includes("private")), {
+      label: "A's own echo",
+    });
+    const heardByB = parseMessages(fromB.stop());
 
     expect(heardByB.some((l) => l.includes("private"))).toBe(false);
 
@@ -864,14 +922,20 @@ describe("smoke / 6: communication reaches other sockets", () => {
     await authAndCreate(userB, "user-w-b", "Finn");
     await authAndCreate(userC, "user-w-c", "Gwen");
 
-    const stopB = collectFrom(userB);
-    const stopC = collectFrom(userC);
+    const fromB = collectFrom(userB);
+    const fromC = collectFrom(userC);
     userA.send(
       JSON.stringify({ type: "CLIENT_MESSAGE", message: "whisper Finn psst" }),
     );
-    await drainUntilSilent(userA);
-    const heardByB = parseMessages(stopB());
-    const heardByC = parseMessages(stopC());
+    const heardByB = parseMessages(
+      await fromB.until((m) => m.some((l) => l.includes('whispers "psst" to you')), {
+        label: "the whisper on its target",
+      }),
+    );
+    fromB.stop();
+    // C is read only after B has demonstrably received it, so "C heard
+    // nothing" is a fact about routing rather than about timing.
+    const heardByC = parseMessages(fromC.stop());
 
     expect(heardByB.some((l) => l.includes('whispers "psst" to you'))).toBe(true);
     expect(heardByC.some((l) => l.includes("psst"))).toBe(false);

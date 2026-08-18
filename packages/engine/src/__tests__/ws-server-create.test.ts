@@ -27,6 +27,16 @@ import WebSocket from "ws";
 import type { CachedRoom } from "../world/world-state.js";
 import { WorldState } from "../world/world-state.js";
 import { MudWsServer } from "../ws-server.js";
+import {
+  drainUntil,
+  parseMessages as messages,
+  type Predicate,
+} from "./support/ws-drain.js";
+
+// See mud-smoke.test.ts: the waits below are condition-based, so jest's own
+// 5s ceiling must sit above the helpers' failure cap or it fires first and
+// discards their diagnostic (NEH-924).
+jest.setTimeout(30_000);
 
 const SECRET = "ws-create-secret";
 const AUDIENCE = "hopper-mud";
@@ -239,37 +249,13 @@ async function openClient(url: string): Promise<WebSocket> {
   return client;
 }
 
-/** Drain incoming frames until the socket is quiet for `idleMs`. */
-function drainUntilSilent(sock: WebSocket, idleMs = 60): Promise<string[]> {
-  return new Promise((resolve) => {
-    const frames: string[] = [];
-    let timer: NodeJS.Timeout | undefined;
-    const reset = (): void => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        sock.off("message", onMsg);
-        resolve(frames);
-      }, idleMs);
-    };
-    const onMsg = (raw: WebSocket.RawData): void => {
-      frames.push(raw.toString());
-      reset();
-    };
-    sock.on("message", onMsg);
-    reset();
-  });
-}
-
-function messages(frames: string[]): string[] {
-  return frames
-    .map((f) => JSON.parse(f) as { type: string; message?: string })
-    .filter((p) => p.type === "SERVER_MESSAGE")
-    .map((p) => p.message ?? "");
-}
-
 async function authNew(sock: WebSocket, userId: string): Promise<string[]> {
   sock.send(JSON.stringify({ type: "AUTH", token: token(userId) }));
-  return messages(await drainUntilSilent(sock));
+  return messages(
+    await drainUntil(sock, (m) => m.some((l) => l.includes("don't have a character")), {
+      label: "the no-character prompt",
+    }),
+  );
 }
 
 /* ── tests ───────────────────────────────────────────────────────── */
@@ -284,6 +270,13 @@ async function authNew(sock: WebSocket, userId: string): Promise<string[]> {
 async function createViaFlow(
   client: WebSocket,
   name: string,
+  /**
+   * What the LAST step is expected to say. It differs per test — a welcome,
+   * "name is taken", a create failure — so the caller names it rather than
+   * the helper guessing, and the wait ends on that line rather than on a
+   * quiet socket (NEH-924).
+   */
+  awaiting: Predicate,
   opts: { bare?: boolean; race?: string; characterClass?: string } = {},
 ): Promise<string[]> {
   client.send(
@@ -292,21 +285,25 @@ async function createViaFlow(
       message: opts.bare ? name : `create ${name}`,
     }),
   );
-  await drainUntilSilent(client);
+  await drainUntil(client, (m) => m.some((l) => l.includes("Choose a race")), {
+    label: "the race prompt",
+  });
   client.send(
     JSON.stringify({
       type: "CLIENT_MESSAGE",
       message: opts.race ?? "dwarf",
     }),
   );
-  await drainUntilSilent(client);
+  await drainUntil(client, (m) => m.some((l) => l.includes("choose a class")), {
+    label: "the class prompt",
+  });
   client.send(
     JSON.stringify({
       type: "CLIENT_MESSAGE",
       message: opts.characterClass ?? "mage",
     }),
   );
-  return drainUntilSilent(client);
+  return drainUntil(client, awaiting, { label: `the creation outcome for ${name}` });
 }
 
 describe("MudWsServer — character creation flow", () => {
@@ -336,7 +333,11 @@ describe("MudWsServer — character creation flow", () => {
     const client = await openClient(booted.url);
     await authNew(client, "u-create");
 
-    const lines = messages(await createViaFlow(client, "Aelric"));
+    const lines = messages(
+      await createViaFlow(client, "Aelric", (m) =>
+        m.some((l) => l === ROOM_SQUARE.name),
+      ),
+    );
 
     expect(booted.prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
     const data = booted.prisma.mudPlayer.create.mock.calls[0]?.[0]
@@ -353,7 +354,14 @@ describe("MudWsServer — character creation flow", () => {
     const client = await openClient(booted.url);
     await authNew(client, "u-bare");
 
-    const lines = messages(await createViaFlow(client, "Brunhild", { bare: true }));
+    const lines = messages(
+      await createViaFlow(
+        client,
+        "Brunhild",
+        (m) => m.some((l) => l.includes("Welcome, Brunhild")),
+        { bare: true },
+      ),
+    );
 
     expect(booted.prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
     const data = booted.prisma.mudPlayer.create.mock.calls[0]?.[0]
@@ -369,12 +377,20 @@ describe("MudWsServer — character creation flow", () => {
     await authNew(client, "u-blank");
 
     client.send(JSON.stringify({ type: "CLIENT_MESSAGE", message: "   " }));
-    const rejected = messages(await drainUntilSilent(client));
+    const rejected = messages(
+      await drainUntil(client, (m) => m.some((l) => l.includes("can't be empty")), {
+        label: "the blank-name refusal",
+      }),
+    );
     expect(rejected.some((l) => l.includes("can't be empty"))).toBe(true);
     expect(booted.prisma.mudPlayer.create).not.toHaveBeenCalled();
 
     // The socket is still awaiting a name — a valid retry succeeds.
-    const accepted = messages(await createViaFlow(client, "Cara"));
+    const accepted = messages(
+      await createViaFlow(client, "Cara", (m) =>
+        m.some((l) => l.includes("Welcome, Cara")),
+      ),
+    );
     expect(booted.prisma.mudPlayer.create).toHaveBeenCalledTimes(1);
     expect(accepted.some((l) => l.includes("Welcome, Cara"))).toBe(true);
     client.close();
@@ -391,13 +407,14 @@ describe("MudWsServer — character creation flow", () => {
     const client = await openClient(booted.url);
     await authNew(client, "u-dupe");
 
-    const lines = messages(await createViaFlow(client, "Dahlia"));
+    const taken: Predicate = (m) => m.some((l) => /name is taken/i.test(l));
+    const lines = messages(await createViaFlow(client, "Dahlia", taken));
     expect(lines.some((l) => /name is taken/i.test(l))).toBe(true);
 
     // A name collision rewinds to the NAME step, so the obvious retry —
     // typing `create <name>` again — is read as a name and not as an answer
     // to the race question the player never got back to.
-    const retry = messages(await createViaFlow(client, "Dahlia"));
+    const retry = messages(await createViaFlow(client, "Dahlia", taken));
     expect(retry.some((l) => /name is taken/i.test(l))).toBe(true);
     client.close();
   });
@@ -411,7 +428,11 @@ describe("MudWsServer — character creation flow", () => {
     const client = await openClient(booted.url);
     await authNew(client, "u-err");
 
-    const lines = messages(await createViaFlow(client, "Eira"));
+    const lines = messages(
+      await createViaFlow(client, "Eira", (m) =>
+        m.some((l) => l.includes("db offline")),
+      ),
+    );
     expect(lines.some((l) => l.includes("Couldn't create character"))).toBe(
       true,
     );
