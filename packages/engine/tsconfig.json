@@ -19,5 +19,16 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*"],
-  "exclude": ["dist", "node_modules", "**/*.test.ts"]
+  // `**/*.test.ts` alone is not enough: a helper under `__tests__` that is
+  // not itself a `.test.ts` file (`__tests__/support/*.ts`) matches none of
+  // these patterns and is emitted into `dist/`, which then ships in the
+  // published package. `src/__integration__/{harness,setup}.ts` had already
+  // been shipping for the same reason. Exclude both trees (NEH-924).
+  "exclude": [
+    "dist",
+    "node_modules",
+    "**/*.test.ts",
+    "**/__tests__/**",
+    "**/__integration__/**"
+  ]
 }

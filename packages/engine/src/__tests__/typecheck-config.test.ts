@@ -77,4 +77,20 @@ describe("the typecheck gate covers test files", () => {
     const config = readJson("tsconfig.json") as { exclude?: string[] };
     expect(config.exclude ?? []).toContain("**/*.test.ts");
   });
+
+  it("keeps the whole __tests__ tree out of the BUILD config, not just *.test.ts", () => {
+    // `**/*.test.ts` was the only exclusion, and it passed while `tsc -p
+    // tsconfig.json` emitted `dist/__tests__/support/ws-drain.js` — a shared
+    // socket-wait helper is not itself a `.test.ts` file, so it matched
+    // nothing and shipped in the published package (NEH-924).
+    //
+    // This is the assertion the older one only looked like it was making:
+    // the previous check was green over a set that did not include the file
+    // that leaked.
+    const config = readJson("tsconfig.json") as { exclude?: string[] };
+    expect(config.exclude ?? []).toContain("**/__tests__/**");
+    // The integration harness had been leaking the same way, and for the
+    // same reason — `harness.ts` and `setup.ts` are not `.test.ts` files.
+    expect(config.exclude ?? []).toContain("**/__integration__/**");
+  });
 });
