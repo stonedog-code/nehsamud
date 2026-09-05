@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "project": "nehsamud",
+  "//panda": "apps/web/panda.test.ts asserts the Panda include globs resolve to real files. It is a build-config guard rather than a test of behaviour, but it runs in the unit tier and fails there, so that is where it is counted.",
+  "tiers": {
+    "unit": {
+      "include": [
+        "packages/*/src/__tests__/**/*.test.ts",
+        "apps/web/src/**/__tests__/**/*.test.ts",
+        "apps/web/panda.test.ts"
+      ]
+    },
+    "integration": {
+      "include": ["packages/*/src/__integration__/**/*.test.ts"]
+    },
+    "e2e": {
+      "include": ["apps/web/e2e/**/*.spec.ts"]
+    }
+  }
+}
