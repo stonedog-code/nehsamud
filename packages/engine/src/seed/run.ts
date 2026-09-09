@@ -7,6 +7,7 @@
  * deploy chain will hook it in at Phase 10 alongside Prisma migrate.
  */
 
+import { resolveContentPack } from "../content/resolve.js";
 import { createDb } from "../db.js";
 import { seedCatalog } from "./seed.js";
 
@@ -24,10 +25,17 @@ async function main(): Promise<void> {
     );
     process.exit(2);
   }
+  // Resolve and VALIDATE the pack before opening a connection. A pack whose
+  // exits go nowhere should cost nothing to reject — and the failure the
+  // seeder must never produce is a half-written world, which is exactly what
+  // validating after the first upsert would allow (PRD-0002 R5).
+  const pack = resolveContentPack();
+  console.log(`Content pack: ${pack.name} (${pack.key})`);
+
   const prisma = createDb({ databaseUrl, log: ["warn", "error"] });
   console.log("Seeding mud.* catalog…");
   try {
-    const counts = await seedCatalog(prisma);
+    const counts = await seedCatalog(prisma, pack);
     console.log(
       `✓ character options=${counts.options} across ${counts.optionGroups} group(s)`,
     );

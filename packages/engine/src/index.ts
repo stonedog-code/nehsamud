@@ -147,3 +147,27 @@ export { initTelemetry } from "./telemetry/setup.js";
 
 /* ── World content ────────────────────────────────────────────── */
 export * as fixtures from "./seed/fixtures/index.js";
+
+/**
+ * The content-pack contract (PRD-0002).
+ *
+ * This is the surface a host authors against: build a `ContentPack`, check
+ * it with `assertValidContentPack`, and hand it to the seeder and the
+ * server. `TOWNSMEE_PACK` is exported as the bundled example rather than as
+ * a thing to depend on — the engine ships a world, but no longer assumes
+ * one.
+ */
+export {
+  assertValidContentPack,
+  validateContentPack,
+  type ContentPack,
+  type PackProblem,
+} from "./content/pack.js";
+export {
+  resolveContentPack,
+  BUNDLED_PACKS,
+  CONTENT_PACK_ENV,
+  DEFAULT_CONTENT_PACK_KEY,
+} from "./content/resolve.js";
+export { TOWNSMEE_PACK } from "./content/townsmee.js";
+export { seedCatalog, pruneCatalog } from "./seed/seed.js";

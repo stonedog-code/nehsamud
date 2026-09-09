@@ -13,7 +13,6 @@
 import type { CommandHandler } from "../types.js";
 import { reply } from "../types.js";
 import { DIRECTIONS } from "../parser.js";
-import { findArea } from "../../seed/fixtures/areas.js";
 import { lookHandler } from "./look.js";
 
 /**
@@ -70,7 +69,7 @@ export const moveHandler: CommandHandler = async (ctx) => {
   // player needs telling, because the next room is where the difficulty
   // steps up.
   if (destination && room.area !== destination.area) {
-    const area = findArea(destination.area);
+    const area = ctx.world.findArea(destination.area);
     if (area) {
       return {
         ...looked,

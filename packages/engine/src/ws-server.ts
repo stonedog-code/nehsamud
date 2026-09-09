@@ -156,9 +156,17 @@ export interface MudWsServerOptions {
    * Phase 1-style transport-only tests don't have to construct a
    * world; production callers always supply one. */
   world?: WorldState;
-  /** EnumKey of the room a freshly-spawned player lands in. Falls
-   * back to "TOWNSMEE_TOWNSQUARE" which the Phase 3 seed always
-   * creates. */
+  /**
+   * EnumKey of the room a freshly-spawned player lands in.
+   *
+   * Defaults to the spawn declared by `world`'s content pack, which is
+   * where it belongs — this used to be a string literal naming one
+   * particular world's town square, so an engine serving a care centre
+   * spawned its residents into a room that did not exist there.
+   *
+   * Still overridable, because a test that hydrates a world by hand has no
+   * pack and needs to say where the spawn is.
+   */
   spawnRoomEnumKey?: string;
   /** AI service factory result. Optional — when undefined,
    * handlers fall back to canned behavior. */
@@ -202,8 +210,6 @@ export interface MudWsServerOptions {
    */
   operators?: ReadonlySet<string>;
 }
-
-const DEFAULT_SPAWN_ROOM_ENUM_KEY = "TOWNSMEE_TOWNSQUARE";
 
 /**
  * PlayerRecord → the session's character sheet.
@@ -316,7 +322,8 @@ export class MudWsServer {
 
   constructor(options: MudWsServerOptions) {
     this.world = options.world;
-    this.spawnRoomEnumKey = options.spawnRoomEnumKey ?? DEFAULT_SPAWN_ROOM_ENUM_KEY;
+    this.spawnRoomEnumKey =
+      options.spawnRoomEnumKey ?? options.world?.spawnRoomEnumKey ?? "";
     this.ai = options.ai;
     this.prisma = options.prisma;
     this.roomArt = options.roomArt ?? new RoomArtGenerator();

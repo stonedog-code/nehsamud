@@ -1,3 +1,4 @@
+import { TOWNSMEE_PACK } from "../content/townsmee.js";
 import {
   CHARACTER_OPTION_GROUPS,
   ITEMS,
@@ -197,7 +198,7 @@ describe("pruneCatalog removes what no fixture declares", () => {
     // A seed that deletes on a matching database would be far worse than one
     // that keeps stale rows.
     const db = makeDb();
-    const result = await pruneCatalog(db.prisma);
+    const result = await pruneCatalog(db.prisma, TOWNSMEE_PACK);
     expect(result).toEqual({
       rooms: [],
       npcs: [],
@@ -214,14 +215,14 @@ describe("pruneCatalog removes what no fixture declares", () => {
     const db = makeDb({
       npcs: [{ id: "npc-ghost", slug: "jaque" }],
     });
-    const result = await pruneCatalog(db.prisma);
+    const result = await pruneCatalog(db.prisma, TOWNSMEE_PACK);
     expect(result.npcs).toEqual(["jaque"]);
     expect(db.deleted.npcs).toEqual(["npc-ghost"]);
   });
 
   it("removes an orphaned room", async () => {
     const db = makeDb({ rooms: [{ id: "room-ghost", enumKey: "OLD_WALL_7" }] });
-    const result = await pruneCatalog(db.prisma);
+    const result = await pruneCatalog(db.prisma, TOWNSMEE_PACK);
     expect(result.rooms).toEqual(["OLD_WALL_7"]);
     expect(db.deleted.rooms).toEqual(["room-ghost"]);
   });
@@ -230,12 +231,12 @@ describe("pruneCatalog removes what no fixture declares", () => {
     const db = makeDb({
       hostiles: [{ id: "mon-ghost", slug: "dire-badger" }],
     });
-    expect((await pruneCatalog(db.prisma)).hostiles).toEqual(["dire-badger"]);
+    expect((await pruneCatalog(db.prisma, TOWNSMEE_PACK)).hostiles).toEqual(["dire-badger"]);
   });
 
   it("leaves the rooms the fixtures still declare completely alone", async () => {
     const db = makeDb({ rooms: [{ id: "room-ghost", enumKey: "OLD_WALL_7" }] });
-    await pruneCatalog(db.prisma);
+    await pruneCatalog(db.prisma, TOWNSMEE_PACK);
     expect(db.deleted.rooms).not.toContain("room-0");
     expect(db.deleted.rooms).toHaveLength(1);
   });
@@ -251,7 +252,7 @@ describe("pruneCatalog refuses to destroy what a player owns", () => {
       items: [{ id: "item-heirloom", name: "Grandfather's Blade" }],
       carried: new Set(["item-heirloom"]),
     });
-    const result = await pruneCatalog(db.prisma);
+    const result = await pruneCatalog(db.prisma, TOWNSMEE_PACK);
     expect(result.items).toEqual([]);
     expect(db.deleted.items).toEqual([]);
   });
@@ -260,7 +261,7 @@ describe("pruneCatalog refuses to destroy what a player owns", () => {
     const db = makeDb({
       items: [{ id: "item-junk", name: "Broken Cog" }],
     });
-    expect((await pruneCatalog(db.prisma)).items).toEqual(["Broken Cog"]);
+    expect((await pruneCatalog(db.prisma, TOWNSMEE_PACK)).items).toEqual(["Broken Cog"]);
   });
 
   it("will not prune an option a character was built from", async () => {
@@ -269,14 +270,14 @@ describe("pruneCatalog refuses to destroy what a player owns", () => {
       options: [{ id: "option-gnome", slug: "gnome", groupKey: "race" }],
       inUse: new Set(["option-gnome"]),
     });
-    expect((await pruneCatalog(db.prisma)).options).toEqual([]);
+    expect((await pruneCatalog(db.prisma, TOWNSMEE_PACK)).options).toEqual([]);
   });
 
   it("prunes an unused option, naming its group", async () => {
     const db = makeDb({
       options: [{ id: "option-druid", slug: "druid", groupKey: "class" }],
     });
-    expect((await pruneCatalog(db.prisma)).options).toEqual(["class/druid"]);
+    expect((await pruneCatalog(db.prisma, TOWNSMEE_PACK)).options).toEqual(["class/druid"]);
   });
 
   it("removes a whole group the pack stopped declaring", async () => {
@@ -286,7 +287,7 @@ describe("pruneCatalog refuses to destroy what a player owns", () => {
       optionGroups: [{ id: "group-homeland", key: "homeland" }],
       options: [{ id: "option-hills", slug: "hills", groupKey: "homeland" }],
     });
-    const result = await pruneCatalog(db.prisma);
+    const result = await pruneCatalog(db.prisma, TOWNSMEE_PACK);
     expect(result.options).toEqual(["homeland/hills"]);
     expect(result.optionGroups).toEqual(["homeland"]);
   });
@@ -298,7 +299,7 @@ describe("pruneCatalog refuses to destroy what a player owns", () => {
       options: [{ id: "option-hills", slug: "hills", groupKey: "homeland" }],
       inUse: new Set(["option-hills"]),
     });
-    const result = await pruneCatalog(db.prisma);
+    const result = await pruneCatalog(db.prisma, TOWNSMEE_PACK);
     expect(result.options).toEqual([]);
     expect(result.optionGroups).toEqual([]);
   });
@@ -307,7 +308,7 @@ describe("pruneCatalog refuses to destroy what a player owns", () => {
     const db = makeDb({
       options: [{ id: "option-druid", slug: "druid", groupKey: "class" }],
     });
-    expect((await pruneCatalog(db.prisma)).optionGroups).toEqual([]);
+    expect((await pruneCatalog(db.prisma, TOWNSMEE_PACK)).optionGroups).toEqual([]);
   });
 });
 
@@ -321,7 +322,7 @@ describe("pruneCatalog moves players out before removing a room", () => {
       rooms: [{ id: "room-ghost", enumKey: "OLD_WALL_7" }],
       occupied: new Set(["room-ghost"]),
     });
-    const result = await pruneCatalog(db.prisma);
+    const result = await pruneCatalog(db.prisma, TOWNSMEE_PACK);
     expect(result.playersRelocated).toBe(1);
     expect(result.rooms).toEqual(["OLD_WALL_7"]);
   });
@@ -333,7 +334,7 @@ describe("pruneCatalog moves players out before removing a room", () => {
       rooms: [{ id: "room-ghost", enumKey: "OLD_WALL_7" }],
       withoutSpawn: true,
     });
-    const result = await pruneCatalog(db.prisma);
+    const result = await pruneCatalog(db.prisma, TOWNSMEE_PACK);
     expect(result.rooms).toEqual([]);
     expect(db.deleted.rooms).toEqual([]);
   });

@@ -1,3 +1,4 @@
+import { TOWNSMEE_PACK } from "../content/townsmee.js";
 /**
  * Verifies the seeder's upsert semantics + the room-exit /
  * NPC-room cross-reference resolution against a mock PrismaClient.
@@ -153,7 +154,10 @@ describe("seedCatalog — orchestration", () => {
     const { prisma, calls } = makeMockPrisma();
     // Cast: the mock only has the methods we use; Prisma's full
     // surface isn't reproduced here.
-    const result = await seedCatalog(prisma as unknown as Parameters<typeof seedCatalog>[0]);
+    const result = await seedCatalog(
+      prisma as unknown as Parameters<typeof seedCatalog>[0],
+      TOWNSMEE_PACK,
+    );
 
     expect(result).toEqual({
       optionGroups: CHARACTER_OPTION_GROUPS.length,
@@ -191,7 +195,10 @@ describe("seedCatalog — orchestration", () => {
 
   it("upserts rooms first WITHOUT exits, then patches exits to resolved UUIDs", async () => {
     const { prisma, calls } = makeMockPrisma();
-    await seedCatalog(prisma as unknown as Parameters<typeof seedCatalog>[0]);
+    await seedCatalog(
+      prisma as unknown as Parameters<typeof seedCatalog>[0],
+      TOWNSMEE_PACK,
+    );
 
     // First-pass create payloads include `exits: {}`.
     for (const call of calls.room) {
@@ -213,7 +220,10 @@ describe("seedCatalog — orchestration", () => {
 
   it("places NPCs in the correct room IDs", async () => {
     const { prisma, calls } = makeMockPrisma();
-    await seedCatalog(prisma as unknown as Parameters<typeof seedCatalog>[0]);
+    await seedCatalog(
+      prisma as unknown as Parameters<typeof seedCatalog>[0],
+      TOWNSMEE_PACK,
+    );
 
     // Build expected: NPC slug → room enumKey → expected room ID
     // ("room-N" from the mock).
@@ -235,7 +245,10 @@ describe("seedCatalog — orchestration", () => {
 
   it("Zofia ends up in the inn — sanity check on the wired-up fixture", async () => {
     const { prisma, calls } = makeMockPrisma();
-    await seedCatalog(prisma as unknown as Parameters<typeof seedCatalog>[0]);
+    await seedCatalog(
+      prisma as unknown as Parameters<typeof seedCatalog>[0],
+      TOWNSMEE_PACK,
+    );
     const zofiaCall = calls.npc.find(
       (c) => (c.create as { slug: string }).slug === "zofia",
     );

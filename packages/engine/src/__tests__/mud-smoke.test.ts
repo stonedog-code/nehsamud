@@ -1,3 +1,4 @@
+import { TOWNSMEE_PACK } from "../content/townsmee.js";
 /**
  * MUD smoke suite — end-to-end against a real HTTP sidecar + a real
  * WebSocket server with a hydrated WorldState. Exercises the five
@@ -126,7 +127,7 @@ const MON_GOBLIN: CachedHostile = {
 
 function buildWorld(): WorldState {
   // PVE — the smoke suite walks the full loop including combat.
-  const w = new WorldState("pve");
+  const w = new WorldState("pve", Date.now, TOWNSMEE_PACK);
   w.hydrate([ROOM_SQUARE, ROOM_INN, ROOM_LOWER], [NPC_ZOFIA], [MON_GOBLIN]);
   return w;
 }

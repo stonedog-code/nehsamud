@@ -1,3 +1,4 @@
+import { TOWNSMEE_PACK } from "../content/townsmee.js";
 /**
  * End-to-end WebSocket + dispatcher integration. Boots a real WS
  * server with a hydrated WorldState (no DB), connects a client,
@@ -59,7 +60,7 @@ function buildWorld(): WorldState {
     dialogLines: ["A room for the night?"],
     interests: ["lodging"],
   };
-  const w = new WorldState();
+  const w = new WorldState(undefined, Date.now, TOWNSMEE_PACK);
   w.hydrate([square, inn], [zofia]);
   return w;
 }
@@ -197,7 +198,7 @@ describe("AUTH_OK reports the world's own capabilities", () => {
    */
   async function bootWithMode(mode: "exploration" | "pve" | "pvp") {
     const http = createServer();
-    const world = new WorldState(mode);
+    const world = new WorldState(mode, Date.now, TOWNSMEE_PACK);
     world.hydrate([]);
     const server = new MudWsServer({ server: http, world });
     await new Promise<void>((resolve, reject) => {

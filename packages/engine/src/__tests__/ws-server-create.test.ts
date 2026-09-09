@@ -1,3 +1,4 @@
+import { TOWNSMEE_PACK } from "../content/townsmee.js";
 /**
  * Character-creation flow over a real WebSocket connection.
  *
@@ -64,7 +65,7 @@ const ROOM_SQUARE: CachedRoom = {
 };
 
 function buildWorld(): WorldState {
-  const w = new WorldState();
+  const w = new WorldState(undefined, Date.now, TOWNSMEE_PACK);
   w.hydrate([ROOM_SQUARE], [], []);
   return w;
 }

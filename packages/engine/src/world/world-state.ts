@@ -20,6 +20,8 @@
 
 import type { PrismaClient } from "@nehsamud/engine-db";
 
+import type { ContentPack } from "../content/pack.js";
+import type { AreaFixture } from "../seed/fixtures/areas.js";
 import {
   DEFAULT_GAME_MODE,
   capabilitiesFor,
@@ -193,9 +195,53 @@ export class WorldState {
    */
   private readonly now: () => number;
 
-  constructor(mode: GameMode = DEFAULT_GAME_MODE, now: () => number = Date.now) {
+  /**
+   * The content pack this world was built from, when it has one.
+   *
+   * Optional because a great many tests build a world by `hydrate()` and
+   * never seed anything — they care about movement or combat, not about
+   * which world they are in. Production always passes one.
+   *
+   * Held here rather than threaded through `CommandContext` because every
+   * handler already receives the world, so nothing has to be plumbed and no
+   * call site can forget. It is also the honest home for it: the spawn room
+   * and the area names are properties OF a world, and the alternative was
+   * three files each holding their own copy of the same string literal with
+   * no mechanism keeping them in step.
+   */
+  readonly pack?: ContentPack;
+
+  constructor(
+    mode: GameMode = DEFAULT_GAME_MODE,
+    now: () => number = Date.now,
+    pack?: ContentPack,
+  ) {
     this.mode = mode;
     this.now = now;
+    this.pack = pack;
+  }
+
+  /**
+   * EnumKey of the room a new or displaced character lands in.
+   *
+   * Empty when this world has no pack, which is not a silent fallback: every
+   * caller already had to handle a spawn room that does not resolve, and
+   * `getRoomByEnumKey("")` returns undefined, so a packless world takes the
+   * branch that says so rather than one that guesses.
+   */
+  get spawnRoomEnumKey(): string {
+    return this.pack?.spawnRoomEnumKey ?? "";
+  }
+
+  /**
+   * Look up one of this world's areas by key.
+   *
+   * Was a module-scope `findArea` over the compiled-in fixtures, which meant
+   * a second world's rooms would resolve their area names against
+   * Townsmee's regions and silently announce the wrong place.
+   */
+  findArea(key: string): AreaFixture | undefined {
+    return this.pack?.areas.find((area) => area.key === key);
   }
 
   /** What this world permits. Derived from {@link mode}. */
