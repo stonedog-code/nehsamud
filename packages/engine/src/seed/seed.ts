@@ -17,14 +17,7 @@
 
 import type { PrismaClient } from "@nehsamud/engine-db";
 
-import {
-  CHARACTER_OPTION_GROUPS,
-  HOSTILES,
-  ITEMS,
-  ITEM_PLACEMENTS,
-  NPCS,
-  ROOMS,
-} from "./fixtures/index.js";
+import type { ContentPack } from "../content/pack.js";
 
 export interface SeedResult {
   /** Character-creation axes this pack declares. */
@@ -62,20 +55,26 @@ export interface PruneResult {
   playersRelocated: number;
 }
 
-export async function seedCatalog(prisma: PrismaClient): Promise<SeedResult> {
-  const { groups: optionGroups, options } = await seedCharacterOptions(prisma);
+export async function seedCatalog(
+  prisma: PrismaClient,
+  pack: ContentPack,
+): Promise<SeedResult> {
+  const { groups: optionGroups, options } = await seedCharacterOptions(
+    prisma,
+    pack,
+  );
   // Rooms must land before NPCs (NPCs may reference a room) and
   // before exit resolution.
-  const rooms = await seedRooms(prisma);
-  const items = await seedItems(prisma);
+  const rooms = await seedRooms(prisma, pack);
+  const items = await seedItems(prisma, pack);
   // After rooms AND items — it joins the two.
-  const placements = await seedItemPlacements(prisma);
-  const hostiles = await seedHostiles(prisma);
-  const npcs = await seedNpcs(prisma);
+  const placements = await seedItemPlacements(prisma, pack);
+  const hostiles = await seedHostiles(prisma, pack);
+  const npcs = await seedNpcs(prisma, pack);
   // Last, so everything the fixtures DO declare is already present — the
   // prune can then treat "absent from the fixtures" as "absent from the
   // database" without racing its own upserts.
-  const pruned = await pruneCatalog(prisma);
+  const pruned = await pruneCatalog(prisma, pack);
   return {
     optionGroups,
     options,
@@ -99,9 +98,10 @@ export async function seedCatalog(prisma: PrismaClient): Promise<SeedResult> {
  */
 async function seedCharacterOptions(
   prisma: PrismaClient,
+  pack: ContentPack,
 ): Promise<{ groups: number; options: number }> {
   let options = 0;
-  for (const group of CHARACTER_OPTION_GROUPS) {
+  for (const group of pack.characterOptionGroups) {
     const row = await prisma.mudCharacterOptionGroup.upsert({
       where: { key: group.key },
       create: {
@@ -143,13 +143,16 @@ async function seedCharacterOptions(
       options += 1;
     }
   }
-  return { groups: CHARACTER_OPTION_GROUPS.length, options };
+  return { groups: pack.characterOptionGroups.length, options };
 }
 
-async function seedRooms(prisma: PrismaClient): Promise<number> {
+async function seedRooms(
+  prisma: PrismaClient,
+  pack: ContentPack,
+): Promise<number> {
   // Two passes: (1) upsert rooms without exits to ensure every
   // enumKey exists, (2) resolve enumKey exits to UUIDs and patch.
-  for (const r of ROOMS) {
+  for (const r of pack.rooms) {
     await prisma.mudRoom.upsert({
       where: { enumKey: r.enumKey },
       create: {
@@ -170,11 +173,11 @@ async function seedRooms(prisma: PrismaClient): Promise<number> {
   }
   // Resolve exits.
   const all = await prisma.mudRoom.findMany({
-    where: { enumKey: { in: ROOMS.map((r) => r.enumKey) } },
+    where: { enumKey: { in: pack.rooms.map((r) => r.enumKey) } },
     select: { id: true, enumKey: true },
   });
   const byKey = new Map(all.map((row) => [row.enumKey, row.id]));
-  for (const r of ROOMS) {
+  for (const r of pack.rooms) {
     const resolved: Record<string, string> = {};
     for (const [dir, targetKey] of Object.entries(r.exits)) {
       const targetId = byKey.get(targetKey);
@@ -190,11 +193,14 @@ async function seedRooms(prisma: PrismaClient): Promise<number> {
       data: { exits: resolved },
     });
   }
-  return ROOMS.length;
+  return pack.rooms.length;
 }
 
-async function seedItems(prisma: PrismaClient): Promise<number> {
-  for (const i of ITEMS) {
+async function seedItems(
+  prisma: PrismaClient,
+  pack: ContentPack,
+): Promise<number> {
+  for (const i of pack.items) {
     await prisma.mudItem.upsert({
       where: { name: i.name },
       create: i,
@@ -207,7 +213,7 @@ async function seedItems(prisma: PrismaClient): Promise<number> {
       },
     });
   }
-  return ITEMS.length;
+  return pack.items.length;
 }
 
 /**
@@ -225,9 +231,12 @@ async function seedItems(prisma: PrismaClient): Promise<number> {
  * empty. The seed reported `placed=3` for four placements, which is the only
  * reason it was noticed.
  */
-async function seedItemPlacements(prisma: PrismaClient): Promise<number> {
-  const byRoom = new Map<string, typeof ITEM_PLACEMENTS>();
-  for (const placement of ITEM_PLACEMENTS) {
+async function seedItemPlacements(
+  prisma: PrismaClient,
+  pack: ContentPack,
+): Promise<number> {
+  const byRoom = new Map<string, typeof pack.itemPlacements>();
+  for (const placement of pack.itemPlacements) {
     const list = byRoom.get(placement.roomEnumKey) ?? [];
     list.push(placement);
     byRoom.set(placement.roomEnumKey, list);
@@ -266,8 +275,11 @@ async function seedItemPlacements(prisma: PrismaClient): Promise<number> {
   return placed;
 }
 
-async function seedHostiles(prisma: PrismaClient): Promise<number> {
-  for (const m of HOSTILES) {
+async function seedHostiles(
+  prisma: PrismaClient,
+  pack: ContentPack,
+): Promise<number> {
+  for (const m of pack.hostiles) {
     await prisma.mudHostile.upsert({
       where: { slug: m.slug },
       create: m,
@@ -282,12 +294,15 @@ async function seedHostiles(prisma: PrismaClient): Promise<number> {
       },
     });
   }
-  return HOSTILES.length;
+  return pack.hostiles.length;
 }
 
-async function seedNpcs(prisma: PrismaClient): Promise<number> {
+async function seedNpcs(
+  prisma: PrismaClient,
+  pack: ContentPack,
+): Promise<number> {
   // Resolve roomEnumKey → roomId once for the whole batch.
-  const roomKeys = NPCS.map((n) => n.roomEnumKey).filter(
+  const roomKeys = pack.npcs.map((n) => n.roomEnumKey).filter(
     (k): k is string => k !== null,
   );
   const rooms = roomKeys.length
@@ -298,7 +313,7 @@ async function seedNpcs(prisma: PrismaClient): Promise<number> {
     : [];
   const roomByKey = new Map(rooms.map((r) => [r.enumKey, r.id]));
 
-  for (const n of NPCS) {
+  for (const n of pack.npcs) {
     const roomId = n.roomEnumKey ? roomByKey.get(n.roomEnumKey) ?? null : null;
     if (n.roomEnumKey && !roomId) {
       throw new Error(
@@ -330,16 +345,8 @@ async function seedNpcs(prisma: PrismaClient): Promise<number> {
       },
     });
   }
-  return NPCS.length;
+  return pack.npcs.length;
 }
-
-/**
- * The room a displaced player is put back into.
- *
- * Mirrors ws-server's default. A pack-supplied spawn (PRD-0002 phase 2) will
- * replace both with one value read from the pack.
- */
-const SPAWN_ROOM_ENUM_KEY = "TOWNSMEE_TOWNSQUARE";
 
 /**
  * Remove catalog rows the fixtures no longer declare.
@@ -373,6 +380,7 @@ const SPAWN_ROOM_ENUM_KEY = "TOWNSMEE_TOWNSQUARE";
  */
 export async function pruneCatalog(
   prisma: PrismaClient,
+  pack: ContentPack,
 ): Promise<PruneResult> {
   const result: PruneResult = {
     rooms: [],
@@ -386,7 +394,7 @@ export async function pruneCatalog(
 
   /* ── Things nothing else depends on ─────────────────────────── */
 
-  const hostileSlugs = new Set(HOSTILES.map((m) => m.slug));
+  const hostileSlugs = new Set(pack.hostiles.map((m) => m.slug));
   const staleHostiles = (
     await prisma.mudHostile.findMany({ select: { id: true, slug: true } })
   ).filter((m) => !hostileSlugs.has(m.slug));
@@ -398,7 +406,7 @@ export async function pruneCatalog(
     result.hostiles = staleHostiles.map((m) => m.slug);
   }
 
-  const npcSlugs = new Set(NPCS.map((n) => n.slug));
+  const npcSlugs = new Set(pack.npcs.map((n) => n.slug));
   const staleNpcs = (
     await prisma.mudNpc.findMany({ select: { id: true, slug: true } })
   ).filter((n) => !npcSlugs.has(n.slug));
@@ -411,7 +419,7 @@ export async function pruneCatalog(
 
   /* ── Items: never take something a player is carrying ───────── */
 
-  const itemNames = new Set(ITEMS.map((i) => i.name));
+  const itemNames = new Set(pack.items.map((i) => i.name));
   const staleItems = (
     await prisma.mudItem.findMany({ select: { id: true, name: true } })
   ).filter((i) => !itemNames.has(i.name));
@@ -432,14 +440,14 @@ export async function pruneCatalog(
 
   /* ── Rooms: move players out before the floor goes ──────────── */
 
-  const roomKeys = new Set(ROOMS.map((r) => r.enumKey));
+  const roomKeys = new Set(pack.rooms.map((r) => r.enumKey));
   const staleRooms = (
     await prisma.mudRoom.findMany({ select: { id: true, enumKey: true } })
   ).filter((r) => !roomKeys.has(r.enumKey));
 
   if (staleRooms.length > 0) {
     const spawn = await prisma.mudRoom.findUnique({
-      where: { enumKey: SPAWN_ROOM_ENUM_KEY },
+      where: { enumKey: pack.spawnRoomEnumKey },
       select: { id: true },
     });
     const staleIds = staleRooms.map((r) => r.id);
@@ -471,7 +479,7 @@ export async function pruneCatalog(
   /* ── Character options: never orphan a character ────────────── */
 
   const declaredGroups = new Map(
-    CHARACTER_OPTION_GROUPS.map((g) => [g.key, new Set(g.options.map((o) => o.slug))]),
+    pack.characterOptionGroups.map((g) => [g.key, new Set(g.options.map((o) => o.slug))]),
   );
   const groupRows = await prisma.mudCharacterOptionGroup.findMany({
     select: { id: true, key: true },

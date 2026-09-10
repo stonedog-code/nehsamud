@@ -25,6 +25,7 @@
 import { createServer as createHttpServer } from "node:http";
 
 import { createAiServices } from "./ai/factory.js";
+import { resolveContentPack } from "./content/resolve.js";
 import { disconnectDb, initDb } from "./db.js";
 import { withBootRetry } from "./boot-retry.js";
 import { resolveGameMode } from "./game-mode.js";
@@ -67,6 +68,17 @@ async function main(): Promise<void> {
   // world nobody chose.
   const gameMode = resolveGameMode();
 
+  // Resolve and validate the world before anything connects. PRD-0002 R5: a
+  // pack naming a nonexistent spawn room, or an exit that goes nowhere,
+  // fails the BOOT. The alternative is a world that comes up with holes in
+  // it and reports them one player at a time — the transcript literally said
+  // "(Bug: spawn room missing.)" to whoever happened to die first.
+  //
+  // Before the database, deliberately: a content fault is not worth a
+  // 31-second boot retry against a sidecar, and the operator should see the
+  // real reason rather than a connection error behind it.
+  const pack = resolveContentPack();
+
   // Retried, because this container's boot depends on a SIBLING container
   // (pgbouncer) that Lightsail starts without ordering — and a deployment
   // activates as a unit, so exiting here fails every other container with it.
@@ -78,7 +90,7 @@ async function main(): Promise<void> {
   // Bounded, and it still fails: a genuinely misconfigured database exits with
   // the real error after ~31s rather than booting a world with no rooms in it.
   const prisma = await withBootRetry("db.connect", () => initDb());
-  const world = new WorldState(gameMode);
+  const world = new WorldState(gameMode, Date.now, pack);
   await withBootRetry("world.load", () => world.load(prisma));
 
   // Hostiles are skipped entirely in a mode without them. `spawnHostile`
@@ -86,8 +98,7 @@ async function main(): Promise<void> {
   // skipping here keeps the boot log honest rather than noisy.
   let hostilesSpawned = 0;
   if (world.capabilities.hostiles) {
-    const { HOSTILE_SPAWNS } = await import("./seed/fixtures/index.js");
-    for (const spawn of HOSTILE_SPAWNS) {
+    for (const spawn of pack.hostileSpawns) {
       const room = world.getRoomByEnumKey(spawn.roomEnumKey);
       if (!room) continue;
       const catalog = world.getHostileBySlug(spawn.hostileSlug);
@@ -103,6 +114,7 @@ async function main(): Promise<void> {
     JSON.stringify({
       msg: "world loaded",
       mode: gameMode,
+      pack: pack.key,
       rooms: world.roomCount(),
       npcs: world.npcCount(),
       hostileCatalog: world.hostileCatalogCount(),
@@ -132,6 +144,7 @@ async function main(): Promise<void> {
     ai,
     prisma,
     tracer: telemetry.tracer,
+    spawnRoomEnumKey: pack.spawnRoomEnumKey,
   });
   await new Promise<void>((resolve, reject) => {
     wsHttp.listen(wsPort, "0.0.0.0", () => resolve());

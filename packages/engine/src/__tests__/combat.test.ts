@@ -1,3 +1,4 @@
+import { TOWNSMEE_PACK } from "../content/townsmee.js";
 /**
  * Phase 5 combat: attack handler + hostile spawn/damage/respawn.
  *
@@ -67,7 +68,7 @@ function buildWorld(): WorldState {
   };
   // Explicitly PVE: this file is about combat, and a world defaults to
   // exploration, which has no hostiles to fight.
-  const w = new WorldState("pve");
+  const w = new WorldState("pve", Date.now, TOWNSMEE_PACK);
   w.hydrate([square, lower], [], [goblin, ogre]);
   return w;
 }

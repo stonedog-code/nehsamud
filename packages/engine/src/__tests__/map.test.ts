@@ -1,3 +1,4 @@
+import { TOWNSMEE_PACK } from "../content/townsmee.js";
 import { STARTING_LIVES } from "../progression.js";
 import {
   AREAS,
@@ -221,7 +222,7 @@ describe("area transitions are announced", () => {
     const { parseCommand } = await import("../commands/parser.js");
     const { DEFAULT_MAX_HP } = await import("../world/session.js");
 
-    const world = new WorldState("pve");
+    const world = new WorldState("pve", Date.now, TOWNSMEE_PACK);
     world.hydrate(
       ROOMS.map((r) => ({
         id: r.enumKey,

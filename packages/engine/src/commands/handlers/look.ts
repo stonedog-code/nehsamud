@@ -23,8 +23,6 @@ import { sortDirections } from "../parser.js";
 import type { CommandHandler } from "../types.js";
 import { reply } from "../types.js";
 
-const SPAWN_ROOM_ENUM_KEY = "TOWNSMEE_TOWNSQUARE";
-
 function renderRoom(world: WorldState, room: CachedRoom): string[] {
   const lines = [room.name, room.description];
   const npcs = world.getNpcsInRoom(room.id);
@@ -90,7 +88,10 @@ export const lookHandler: CommandHandler = ({ world, session }) => {
     );
   }
   if (session.defeated) {
-    const spawn = world.getRoomByEnumKey(SPAWN_ROOM_ENUM_KEY);
+    // The spawn is the WORLD's, not this handler's. It used to be a
+    // string literal here, a second copy in `ws-server.ts` and a third in
+    // the seeder, with nothing keeping the three in step.
+    const spawn = world.getRoomByEnumKey(world.spawnRoomEnumKey);
     if (!spawn) {
       return reply(
         "You wake up in a featureless void. (Bug: spawn room missing.)",

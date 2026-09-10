@@ -19,6 +19,7 @@ import { WebSocket } from "ws";
 
 import type { PrismaClient } from "@nehsamud/engine-db";
 
+import { resolveContentPack } from "../content/resolve.js";
 import { createDb } from "../db.js";
 import { resolveGameMode, type GameMode } from "../game-mode.js";
 import { WorldState } from "../world/world-state.js";
@@ -95,12 +96,22 @@ export async function bootEngine(
     databaseUrl: process.env.MUD_DATABASE_URL!,
     log: ["error"],
   });
-  const world = new WorldState(mode, now);
+  // The same pack the seeder used, resolved the same way production
+  // resolves it. A harness that built a packless world would spawn every
+  // integration character into `""` — which is what this tier caught the
+  // first time the spawn stopped being a hardcoded constant.
+  const pack = resolveContentPack();
+  const world = new WorldState(mode, now, pack);
   await world.load(prisma);
 
   const http = createServer();
   await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
-  const server = new MudWsServer({ server: http, world, prisma });
+  const server = new MudWsServer({
+    server: http,
+    world,
+    prisma,
+    spawnRoomEnumKey: pack.spawnRoomEnumKey,
+  });
   const { port } = http.address() as AddressInfo;
 
   return {
