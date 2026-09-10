@@ -16,11 +16,20 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # The freshness guard, asserted in BOTH directions before anything trusts
+      # it: it plants an absent client and a stale one and confirms each is
+      # refused, then confirms a healthy tree passes (NEH-1315).
+      - run: npm run check:generated:self
       # engine-db must build first: it generates the Prisma client the engine
       # type-checks against. `prisma generate` does not connect to a database,
       # so no service container is needed here.
+      #
+      # Kept explicit even though `pretypecheck`/`pretest:unit` now do it too:
+      # a failure HERE names the build, while the same failure inside a pre-hook
+      # is reported as the test lane dying.
       - run: npm run build --workspace @nehsamud/engine-db
       - run: npm run build --workspace @nehsamud/engine
+      - run: npm run check:generated
       - run: npm run typecheck
       - run: npm run test:unit
 
