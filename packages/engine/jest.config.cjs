@@ -14,6 +14,9 @@ module.exports = {
     "^@nehsamud/engine-db$": "<rootDir>/../engine-db/dist/index.js",
   },
   testMatch: ["<rootDir>/src/**/__tests__/**/*.test.ts"],
+  // Scrubs ambient OTEL_* so the verdict is the same inside a wrapper that
+  // exports a config blob (OTEL_ENABLED=false) and on a bare shell.
+  setupFiles: ["<rootDir>/jest.setup.unit.cjs"],
   transform: {
     "^.+\\.ts$": [
       "ts-jest",
